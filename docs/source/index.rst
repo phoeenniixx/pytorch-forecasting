@@ -68,6 +68,7 @@ The :ref:`Tutorials <tutorials>` section provides guidance on how to use models 
    faq
    installation
    api
+   api_v2
    CHANGELOG
 
 

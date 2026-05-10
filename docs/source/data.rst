@@ -32,6 +32,12 @@ See the API documentation for further details on available data encoders and the
 .. moduleautosummary::
    :toctree: api/
    :template: custom-module-template.rst
-   :recursive:
 
-   pytorch_forecasting.data
+    pytorch-forecasting.data.encoders.EncoderNormalizer
+    pytorch-forecasting.data.encoders.GroupNormalizer
+    pytorch-forecasting.data.encoders.MultiNormalizer
+    pytorch-forecasting.data.encoders.NaNLabelEncoder
+    pytorch-forecasting.data.encoders.TorchNormalizer
+    pytorch-forecasting.data.samplers.TimeSynchronizedBatchSampler
+    pytorch-forecasting.data.samplers.GroupedSampler
+    pytorch-forecasting.data.timeseries.TimeSeriesDataSet
