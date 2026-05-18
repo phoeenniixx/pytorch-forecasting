@@ -40,12 +40,19 @@ Join the discussion and track our progress on GitHub:
 .. warning::
     Please note that the V2 modules are currently in active development and is in beta right now, so please use this API with caution.
 
+.. list-table::
+   :widths: 25 75
+   :header-rows: 0
+
+   * - :doc:`data_v2`
+     - Architectural details and API reference for the V2 data pipeline (D1 and D2 layers).
+   * - :doc:`models_v2`
+     - Architectural details and API reference for the V2 forecasting models.
+
 .. autosummary::
    :toctree: api
    :template: custom-module-template.rst
    :recursive:
 
-   data_v2
-   models_v2
    metrics
    utils
