@@ -45,7 +45,7 @@ See the detailed API documentation for the V2 data classes below:
 .. currentmodule:: pytorch_forecasting
 
 .. autosummary::
-   :toctree: api/
+   :toctree: api
    :template: custom-module-template.rst
 
    pytorch-forecasting.data.encoders.EncoderNormalizer
