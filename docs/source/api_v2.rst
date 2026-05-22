@@ -38,7 +38,7 @@ Join the discussion and track our progress on GitHub:
 * **Future Plans:** `PyTorch Forecasting Roadmap <https://github.com/sktime/pytorch-forecasting/issues/1993>`_
 
 .. warning::
-    Please note that the V2 modules are currently in active development and is in beta right now, so please use this API with caution.
+    Please note that the V2 modules are currently in active-development and is in beta right now, so please use this API with caution.
 
 .. autosummary::
    :toctree: api
