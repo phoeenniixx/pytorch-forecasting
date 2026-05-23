@@ -242,6 +242,9 @@ class Base_pkg(_BasePtForecasterV2):
             # BasePkg handles scaler loading
             if self._scaler_path:
                 self._load_scalers(dm, self._scaler_path)
+            else:
+                scaler_state = self.datamodule.get_scalers_state()
+                dm.set_scalers_state(scaler_state)
 
             dm.setup(stage="predict")
             return dm.predict_dataloader()
