@@ -47,12 +47,9 @@ class Base_pkg(_BasePtForecasterV2):
         trainer_cfg: dict[str, Any] | str | Path | None = None,
         datamodule_cfg: dict[str, Any] | str | Path | None = None,
         ckpt_path: str | Path | None = None,
-        scaler_path: str | Path | None = None,
     ):
         self.ckpt_path = Path(ckpt_path) if ckpt_path else None
-        if scaler_path:
-            self._scaler_path = Path(scaler_path)
-        elif self.ckpt_path:
+        if self.ckpt_path:
             # attempt automatic discovery of scaler path when ckpt path is specified.
             potential_scaler = self.ckpt_path.parent / "scalers.pkl"
             self._scaler_path = potential_scaler if potential_scaler.exists() else None
@@ -242,7 +239,9 @@ class Base_pkg(_BasePtForecasterV2):
             # BasePkg handles scaler loading
             if self._scaler_path:
                 self._load_scalers(dm, self._scaler_path)
-            else:
+            elif hasattr(self.datamodule, "get_scalers_state") and hasattr(
+                dm, "set_scalers_state"
+            ):
                 scaler_state = self.datamodule.get_scalers_state()
                 dm.set_scalers_state(scaler_state)
 
