@@ -220,18 +220,13 @@ class Base_pkg(_BasePtForecasterV2):
             )
             return
 
-        if not scaler_path.exists():
-            raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
-
-        try:
+        if scaler_path.exists():
             with open(scaler_path, "rb") as f:
                 scaler_state = pickle.load(f)  # noqa: S301
             datamodule.set_scalers_state(scaler_state)
             print(f"Scalers loaded from: {scaler_path}")
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to load or validate scalers from {scaler_path}: {e}"
-            )
+        else:
+            raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
 
     def _load_dataloader(
         self, data: TimeSeries | LightningDataModule | DataLoader
@@ -282,8 +277,6 @@ class Base_pkg(_BasePtForecasterV2):
         save_ckpt: bool = True,
         ckpt_dir: str | Path = "checkpoints",
         ckpt_kwargs: dict[str, Any] | None = None,
-        save_scalers: bool = True,
-        scaler_dir: str | Path = None,
         **trainer_fit_kwargs,
     ):
         """
@@ -295,17 +288,12 @@ class Base_pkg(_BasePtForecasterV2):
             The data to fit on (D1 or D2 layer). This object is responsible
             for providing both training and validation data.
         save_ckpt : bool, default=True
-            If True, save the best model checkpoint and the `datamodule_cfg`.
+            If True, save the best model checkpoint, fitted scalers, and
+            configuration artifacts to ``ckpt_dir``.
         ckpt_dir : Union[str, Path], default="checkpoints"
-            Directory to save artifacts.
+            Directory to save checkpoint and all artifacts (including scalers).
         ckpt_kwargs : dict, optional
             Keyword arguments passed to ``ModelCheckpoint``.
-        save_scalers : bool, default=True
-            If True, save the fitted scalers after training.
-            Necessary in order to use fitted scalers on new data, e.g.,
-            during prediction.
-        scaler_dir : Union[str, Path], default="fitted_scalers"
-            Directory to save fitted scalers.
         **trainer_fit_kwargs :
             Additional keyword arguments passed to `trainer.fit()`.
 
@@ -318,17 +306,6 @@ class Base_pkg(_BasePtForecasterV2):
             self.datamodule = self._build_datamodule(data)
         else:
             self.datamodule = data
-
-        # Validate datamodule supports scaling
-        if save_scalers and not hasattr(self.datamodule, "get_scalers_state"):
-            warnings.warn(
-                f"DataModule of type {type(self.datamodule).__name__} does not support "
-                "scaler operations. Skipping scaler saving. Use a DataModule that "
-                "implements 'get_scalers_state()' method to enable this feature.",
-                UserWarning,
-                stacklevel=2,
-            )
-            save_scalers = False
 
         self.datamodule.setup(stage="fit")
 
@@ -363,21 +340,12 @@ class Base_pkg(_BasePtForecasterV2):
 
         self.trainer.fit(self.model, datamodule=self.datamodule, **trainer_fit_kwargs)
 
-        # BasePkg handles all scaler persistence
-        if save_scalers:
-            if scaler_dir is None:
-                scaler_dir = Path(ckpt_dir) if save_ckpt else Path("fitted_scalers")
-            else:
-                scaler_dir = Path(scaler_dir)
-            scaler_dir.mkdir(parents=True, exist_ok=True)
-            scaler_path = scaler_dir / "scalers.pkl"
-
-            self._save_scalers(scaler_path)
-
         if save_ckpt and checkpoint_cb:
             best_model_path = Path(checkpoint_cb.best_model_path)
-            self._save_artifact(best_model_path.parent)
-            print(f"Artifacts saved in: {best_model_path.parent}")
+            artifact_dir = best_model_path.parent
+            self._save_scalers(artifact_dir / "scalers.pkl")
+            self._save_artifact(artifact_dir)
+            print(f"Artifacts saved in: {artifact_dir}")
             return best_model_path
         return None
 

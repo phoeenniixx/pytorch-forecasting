@@ -1,12 +1,28 @@
+from pathlib import Path
+import pickle
+
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.preprocessing import RobustScaler, StandardScaler
 import torch
 
+from pytorch_forecasting.base._base_pkg import Base_pkg
 from pytorch_forecasting.data.data_module import EncoderDecoderTimeSeriesDataModule
 from pytorch_forecasting.data.encoders import EncoderNormalizer, TorchNormalizer
 from pytorch_forecasting.data.timeseries import TimeSeries
+
+
+class _MockPkg(Base_pkg):
+    """Minimal Base_pkg subclass for testing scaler persistence without a real model."""
+
+    @classmethod
+    def get_cls(cls):
+        raise NotImplementedError
+
+    @classmethod
+    def get_datamodule_cls(cls):
+        return EncoderDecoderTimeSeriesDataModule
 
 
 @pytest.fixture
@@ -657,3 +673,87 @@ def test_set_scalers_state(sample_timeseries_data):
     x_batch, y_batch = batch
     assert x_batch["encoder_cont"].shape[0] == test_dm.batch_size
     assert y_batch.shape[0] == test_dm.batch_size
+
+
+def test_save_scalers_via_pkg(sample_timeseries_data, tmp_path):
+    """Test that _save_scalers writes fitted scaler state to disk."""
+    dm = EncoderDecoderTimeSeriesDataModule(
+        time_series_dataset=sample_timeseries_data,
+        max_encoder_length=24,
+        max_prediction_length=12,
+        batch_size=4,
+        target_normalizer=RobustScaler(),
+        scalers={"cont_feat1": StandardScaler(), "cont_feat2": RobustScaler()},
+    )
+    dm.setup("fit")
+
+    pkg = _MockPkg()
+    pkg.datamodule = dm
+
+    scaler_path = tmp_path / "scalers.pkl"
+    pkg._save_scalers(scaler_path)
+
+    assert scaler_path.exists()
+    assert pkg._scaler_path == scaler_path
+
+    with open(scaler_path, "rb") as f:
+        state = pickle.load(f)  # noqa: S301
+
+    assert "target_normalizer" in state
+    assert "feature_scalers" in state
+    assert state["target_normalizer_fitted"] is True
+    assert state["feature_scalers_fitted"] is True
+    assert "cont_feat1" in state["feature_scalers"]
+    assert "cont_feat2" in state["feature_scalers"]
+
+
+def test_load_scalers_via_pkg(sample_timeseries_data, tmp_path):
+    """Test that _load_scalers restores scaler state from disk into a DataModule."""
+    scalers = {"cont_feat1": StandardScaler()}
+
+    dm_train = EncoderDecoderTimeSeriesDataModule(
+        time_series_dataset=sample_timeseries_data,
+        max_encoder_length=24,
+        max_prediction_length=12,
+        batch_size=4,
+        target_normalizer=RobustScaler(),
+        scalers=scalers,
+    )
+    dm_train.setup("fit")
+
+    pkg = _MockPkg()
+    pkg.datamodule = dm_train
+
+    scaler_path = tmp_path / "scalers.pkl"
+    pkg._save_scalers(scaler_path)
+
+    dm_predict = EncoderDecoderTimeSeriesDataModule(
+        time_series_dataset=sample_timeseries_data,
+        max_encoder_length=24,
+        max_prediction_length=12,
+        batch_size=4,
+        target_normalizer=RobustScaler(),
+        scalers={"cont_feat1": StandardScaler()},
+    )
+    assert not dm_predict._target_normalizer_fitted
+    assert not dm_predict._feature_scalers_fitted
+
+    pkg._load_scalers(dm_predict, scaler_path)
+
+    assert dm_predict._target_normalizer_fitted
+    assert dm_predict._feature_scalers_fitted
+
+
+def test_load_scalers_file_not_found(sample_timeseries_data, tmp_path):
+    """Test that _load_scalers raises FileNotFoundError for a missing scaler file."""
+    dm = EncoderDecoderTimeSeriesDataModule(
+        time_series_dataset=sample_timeseries_data,
+        max_encoder_length=24,
+        max_prediction_length=12,
+        batch_size=4,
+    )
+
+    pkg = _MockPkg()
+
+    with pytest.raises(FileNotFoundError, match="Scaler file not found"):
+        pkg._load_scalers(dm, tmp_path / "nonexistent.pkl")
