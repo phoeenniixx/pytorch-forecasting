@@ -757,3 +757,52 @@ def test_load_scalers_file_not_found(sample_timeseries_data, tmp_path):
 
     with pytest.raises(FileNotFoundError, match="Scaler file not found"):
         pkg._load_scalers(dm, tmp_path / "nonexistent.pkl")
+
+
+def test_scaler_persistence_fit_to_predict(tmp_path):
+    """Integration test to ensurescalers.pkl from fit is auto-discovered and applied at
+    predict. Samformer model from v2 is used here for a real package test."""
+    from pytorch_forecasting.metrics import MAE
+    from pytorch_forecasting.models.samformer._samformer_v2_pkg import Samformer_pkg_v2
+
+    datamodule_cfg = {
+        "max_encoder_length": 4,
+        "max_prediction_length": 3,
+        "batch_size": 2,
+        "train_val_test_split": (0.8, 0.2),
+    }
+    trainer_cfg = {
+        "max_epochs": 1,
+        "accelerator": "cpu",
+        "limit_train_batches": 1,
+        "limit_val_batches": 1,
+        "enable_checkpointing": True,
+        "logger": False,
+    }
+
+    test_data = Samformer_pkg_v2.get_test_dataset_from(**datamodule_cfg)
+    pkg = Samformer_pkg_v2(
+        model_cfg={"loss": MAE(), "hidden_size": 16, "use_revin": False},
+        trainer_cfg=trainer_cfg,
+        datamodule_cfg=datamodule_cfg,
+    )
+
+    ckpt_dir = tmp_path / "checkpoints"
+    best_model_path = pkg.fit(
+        test_data["train"],
+        save_ckpt=True,
+        ckpt_dir=ckpt_dir,
+        ckpt_kwargs={"monitor": "train_loss_epoch"},
+    )
+
+    assert best_model_path is not None
+    scaler_path = best_model_path.parent / "scalers.pkl"
+    assert scaler_path.exists(), "scalers.pkl was not saved alongside checkpoint"
+
+    pkg2 = Samformer_pkg_v2(ckpt_path=best_model_path)
+    assert (
+        pkg2._scaler_path == scaler_path
+    ), "ckpt-loaded pkg did not auto-discover scalers.pkl"
+
+    predictions = pkg2.predict(test_data["predict"], mode="prediction")
+    assert predictions is not None and "prediction" in predictions
