@@ -1,4 +1,4 @@
-API-v2
+API v2
 ======
 
 .. currentmodule:: pytorch_forecasting
@@ -7,7 +7,7 @@ We are currently developing version 2 of PyTorch Forecasting. The primary object
 
 The key structural changes and design philosophies driving V2 include:
 
-* **Decoupling Models and Data Structures:** In the original API, models are heavily tightly coupled with the ``TimeSeriesDataSet`` class. V2 systematically reduces this strict dependency. By decoupling the forecasting models from specific data-handling classes, the models become more modular and can interface more seamlessly with standard PyTorch tensors, data loaders, and external data pipelines.
+* **Decoupling Models and Data Structures:** In the original API, models are heavily tightly coupled with the :py:class:`~data.timeseries.TimeSeriesDataSet` class. V2 systematically reduces this strict dependency. By decoupling the forecasting models from specific data-handling classes, the models become more modular and can interface more seamlessly with standard PyTorch tensors, data loaders, and external data pipelines.
 * **Adoption of a Scikit-Learn-like API:** We are transitioning the user interface to mirror the widely recognized design patterns of ``scikit-learn``. By standardizing the model interfaces to use familiar methodologies (such as standard initialization, ``fit``, and ``predict`` workflows), the API becomes more predictable and accessible to the broader machine learning community.
 * **Simplified User Journey:** Consequently, these architectural changes drastically reduce the amount of boilerplate code required to set up data, initialize models, and generate predictions, allowing users to move from raw data to forecasting more efficiently.
 
@@ -40,13 +40,10 @@ Join the discussion and track our progress on GitHub:
 .. warning::
     Please note that the V2 modules are currently in active-development and is in beta right now, so please use this API with caution.
 
-.. autosummary::
-   :toctree: api
-   :template: custom-module-template.rst
-   :recursive:
+.. toctree::
+    :maxdepth: 2
 
-   data.timeseries._timeseries_v2
-   data.data_module
-   data._tslib_data_module
-   metrics
-   utils
+    Data <data_v2>
+    Models <models_v2>
+    Package <pkg>
+    Metrics <metrics>

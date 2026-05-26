@@ -1,5 +1,5 @@
-API
-====
+API v1
+======
 
 .. currentmodule:: pytorch_forecasting
 

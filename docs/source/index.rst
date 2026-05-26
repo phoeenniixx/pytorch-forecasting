@@ -62,8 +62,8 @@ The :ref:`Tutorials <tutorials>` section provides guidance on how to use models 
 
    getting-started
    tutorials
-   data
-   models
+   data_parent
+   models_parent
    metrics
    faq
    installation
