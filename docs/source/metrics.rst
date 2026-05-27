@@ -41,9 +41,22 @@ See the API documentation for further details on available metrics:
 
 .. currentmodule:: pytorch_forecasting
 
-.. moduleautosummary::
-   :toctree: api
-   :template: custom-module-template.rst
-   :recursive:
+.. autosummary::
+    :toctree: api
 
-   pytorch_forecasting.metrics
+    metrics.quantile.QuantileLoss
+    metrics.point.CrossEntropy
+    metrics.point.PoissonLoss
+    metrics.point.SMAPE
+    metrics.point.MAPE
+    metrics.point.MAE
+    metrics.point.RMSE
+    metrics.point.MASE
+    metrics.point.TweedieLoss
+    metrics.distributions.NormalDistributionLoss
+    metrics.distributions.MultivariateNormalDistributionLoss
+    metrics.distributions.NegativeBinomialDistributionLoss
+    metrics.distributions.LogNormalDistributionLoss
+    metrics.distributions.BetaDistributionLoss
+    metrics.distributions.MQF2DistributionLoss
+    metrics.distributions.ImplicitQuantileNetworkDistributionLoss

@@ -65,6 +65,7 @@ The :ref:`Tutorials <tutorials>` section provides guidance on how to use models 
    data_parent
    models_parent
    metrics
+   pkg
    faq
    installation
    api

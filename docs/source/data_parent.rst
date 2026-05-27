@@ -19,5 +19,5 @@ Currently, PyTorch Forecasting offers two implementations for the data pipeline:
 .. toctree::
     :maxdepth: 2
 
-    Data-v1 <data_v1>
+    Data-v1 <data>
     Data-v2 <data_v2>

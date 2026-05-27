@@ -151,9 +151,16 @@ See the API documentation for further details on available models:
 
 .. currentmodule:: pytorch_forecasting
 
-.. moduleautosummary::
-   :toctree: api/
-   :template: custom-module-template.rst
-   :recursive:
+.. autosummary::
+   :toctree: api
 
-   pytorch_forecasting.models
+    models.deepar.DeepAR
+    models.mlp.DecoderMLP
+    models.nbeats.NBeats
+    models.nbeats.NBeatsKAN
+    models.nhits.NHiTS
+    models.rnn.RecurrentNetwork
+    models.temporal_fusion_transformer.TemporalFusionTransformer
+    models.tide.TiDEModel
+    models.timexer.TimeXer
+    models.xlstm.xLSTMTime
