@@ -14,12 +14,12 @@ How to use this implementation template to implement a new estimator:
 - fill in code for mandatory methods, and optionally for optional methods
 - change docstrings for functions and the file
 - once complete: use as a local library, or contribute to pytorch-forecasting via PR
-- IMPORTANT: if you have some custom layers that are used by the model, you should add
-    that to `pytorch-forecasting.layers` module and then import that layer in this file.
 
 Mandatory methods to implement:
-    forward - the forward pass of the model
-    _pkg - method to access the package class of the model
+    _prepare_metadata - method to create metadata
+    metadata - property to access the metadata
+    _preprocess_data - method to preprocess data
+    setup - method to setup the ML pipeline
 """
 
 # todo: write an informative docstring for the file or module, remove the above
