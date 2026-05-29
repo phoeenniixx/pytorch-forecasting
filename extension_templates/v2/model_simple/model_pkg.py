@@ -59,7 +59,7 @@ class MyModel_pkg(Base_pkg):
         # Please look at pytorch-forecasting.data.data_module folder and find out which
         # data module best suites the requirements of your model implementation
         # If no data module matches the requirements, you might need to implement a new
-        # data module. Please look at extension-templates/datamodule.py for more info
+        # data module. Please look at extension_templates/datamodule.py for more info
         from pytorch_forecasting.data.data_module import CompatibleDatamodule
 
         return CompatibleDatamodule
