@@ -19,6 +19,8 @@ How to use this implementation template to implement a new estimator:
 - ensure interface compatibility by
     pytorch-forecasting.utils._estimator_checks.check_estimator
 - once complete: use as a local library, or contribute to pytorch-forecasting via PR
+- IMPORTANT: if you have some custom layers that are used by the model, you should add
+    that to `pytorch-forecasting.layers` module and then import that layer in this file.
 
 Mandatory methods to implement:
     forward - the forward pass of the model
