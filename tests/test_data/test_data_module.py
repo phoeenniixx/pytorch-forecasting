@@ -7,7 +7,7 @@ import pytest
 from sklearn.preprocessing import RobustScaler, StandardScaler
 import torch
 
-from pytorch_forecasting import GroupNormalizer, MultiNormalizer
+from pytorch_forecasting import GroupNormalizer, MultiNormalizer, NaNLabelEncoder
 from pytorch_forecasting.base._base_pkg import Base_pkg
 from pytorch_forecasting.data.data_module import EncoderDecoderTimeSeriesDataModule
 from pytorch_forecasting.data.encoders import EncoderNormalizer, TorchNormalizer
@@ -500,6 +500,7 @@ def test_multivariate_target():
         "auto",
         TorchNormalizer(),
         EncoderNormalizer(),
+        NaNLabelEncoder(add_nan=True),
     ],
 )
 def test_target_normalizers(sample_timeseries_data, normalizer):

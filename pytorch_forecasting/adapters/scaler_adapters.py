@@ -12,7 +12,7 @@ from pytorch_forecasting.data.encoders import (
     TorchNormalizer,
 )
 
-_SKLEARN_SCALERS = (RobustScaler, StandardScaler)
+_SKLEARN_SCALERS = (RobustScaler, StandardScaler, NaNLabelEncoder)
 
 ArrayLike = torch.Tensor | np.ndarray | pd.Series
 
@@ -43,13 +43,6 @@ class ScalerAdapter:
     a torch.Tensor. Conversions are performed only when the underlying scaler
     requires a specific type:
 
-    - sklearn scalers     : need numpy, reshaped to (-1, 1)
-    - GroupNormalizer     : needs pd.Series (handled by MultiNormalizer internally)
-    - TorchNormalizer /
-      EncoderNormalizer /
-      NaNLabelEncoder     : work natively with tensors
-    - MultiNormalizer     : delegates per-column; each sub-normalizer gets what it needs
-
     Parameters
     ----------
     scaler : sklearn scaler, TorchNormalizer, EncoderNormalizer, NaNLabelEncoder,
@@ -72,13 +65,7 @@ class ScalerAdapter:
         return isinstance(self._scaler, EncoderNormalizer)
 
     def _prepare_input(self, data: ArrayLike) -> ArrayLike:
-        """Coerce data to the type the underlying scaler expects.
-
-        - sklearn         : numpy, shape (-1, 1)
-        - torch-native    : tensor, squeezed to 1-D if (N, 1)
-        - MultiNormalizer : tensor or numpy 2-D (N, n_targets) — MultiNormalizer
-                            handles its own per-column dispatch internally
-        """
+        """Coerce data to the type the underlying scaler expects."""
         if self._is_sklearn:
             return _to_numpy(data).reshape(-1, 1)
 
