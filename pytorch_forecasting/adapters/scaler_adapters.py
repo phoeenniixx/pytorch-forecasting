@@ -176,6 +176,6 @@ class ScalerAdapter:
         columns = []
         for idx, sub in enumerate(self._sub_adapters):
             col = t[:, idx]
-            col = sub.fit_transform(col) if sub.fit_per_sequence else sub.transform(col)
+            col = sub.fit_transform(col) if sub.fit_per_sequence else col
             columns.append(col.unsqueeze(-1))
         return torch.cat(columns, dim=-1)

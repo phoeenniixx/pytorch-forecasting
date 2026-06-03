@@ -864,7 +864,8 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         loaded_feature_scalers = state["feature_scalers"]
         if not isinstance(loaded_feature_scalers, dict):
             raise TypeError(
-                f"Expected feature_scalers to be dict, got {type(loaded_feature_scalers).__name__}"  # noqa: E501
+                f"Expected feature_scalers to be dict, "
+                f"got {type(loaded_feature_scalers).__name__}"
             )
 
         # Check for unexpected and missing features
@@ -888,8 +889,10 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                 loaded_scaler, self._scalers[key].__class__
             ):
                 raise TypeError(
-                    f"Loaded scaler for '{key}' has type {type(loaded_scaler).__name__} "  # noqa: E501
-                    f"but configured scaler has type {type(self._scalers[key]).__name__}"  # noqa: E501
+                    f"Loaded scaler for '{key}' has"
+                    f" type {type(loaded_scaler).__name__} "
+                    f"but configured scaler has type"
+                    f" {type(self._scalers[key]).__name__}"
                 )
         # Validation passed, set the state
         self._target_normalizer = state["target_normalizer"]
