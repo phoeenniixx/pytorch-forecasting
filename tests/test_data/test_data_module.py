@@ -7,6 +7,7 @@ import pytest
 from sklearn.preprocessing import RobustScaler, StandardScaler
 import torch
 
+from pytorch_forecasting import GroupNormalizer, MultiNormalizer
 from pytorch_forecasting.base._base_pkg import Base_pkg
 from pytorch_forecasting.data.data_module import EncoderDecoderTimeSeriesDataModule
 from pytorch_forecasting.data.encoders import EncoderNormalizer, TorchNormalizer
@@ -483,7 +484,7 @@ def test_multivariate_target():
         max_encoder_length=10,
         max_prediction_length=5,
         batch_size=4,
-        target_normalizer=TorchNormalizer(),
+        target_normalizer=MultiNormalizer([EncoderNormalizer(), TorchNormalizer()]),
     )
 
     dm.setup()
@@ -498,8 +499,6 @@ def test_multivariate_target():
         None,
         "auto",
         TorchNormalizer(),
-        StandardScaler(),
-        RobustScaler(),
         EncoderNormalizer(),
     ],
 )
@@ -535,7 +534,7 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
     assert y_with_norm.shape == y_no_norm.shape
     assert x_with_norm["target_past"].shape == x_no_norm["target_past"].shape
 
-    if normalizer is not None:
+    if normalizer is not None and not isinstance(normalizer, EncoderNormalizer):
         assert (
             dm_with_norm._target_normalizer_fitted
         ), "Target normalizer should be fitted"
