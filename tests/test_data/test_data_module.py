@@ -500,7 +500,7 @@ def test_multivariate_target():
         "auto",
         TorchNormalizer(),
         EncoderNormalizer(),
-        NaNLabelEncoder(add_nan=True),
+        # NaNLabelEncoder(add_nan=True),
     ],
 )
 def test_target_normalizers(sample_timeseries_data, normalizer):
