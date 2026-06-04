@@ -212,7 +212,7 @@ class Base_pkg(_BasePtForecasterV2):
         save_ckpt : bool, default=True
             If True, save the best model checkpoint and the `datamodule_cfg`.
         ckpt_dir : Union[str, Path], default="checkpoints"
-            Directory to save checkpoint and all artifacts (including scalers).
+            Directory to save artifacts.
         ckpt_kwargs : dict, optional
             Keyword arguments passed to ``ModelCheckpoint``.
         **trainer_fit_kwargs :
@@ -227,7 +227,6 @@ class Base_pkg(_BasePtForecasterV2):
             self.datamodule = self._build_datamodule(data)
         else:
             self.datamodule = data
-
         self.datamodule.setup(stage="fit")
 
         if self.model is None:
