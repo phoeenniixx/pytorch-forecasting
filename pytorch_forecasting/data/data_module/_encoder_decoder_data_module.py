@@ -480,6 +480,8 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
     def _validate_preprocessing(self):
         """Validate preprocessing by checking if scalers and normalizers are fitted
         on training data."""
+        # todo: use this method for validation when saving and loading of scalers
+        #  is added and supported completely
 
         if self._target_normalizer is not None and not self._target_normalizer_fitted:  # noqa: E501
             raise RuntimeError(
@@ -954,7 +956,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
 
         elif stage == "test":
             if not hasattr(self, "test_dataset"):
-                self._validate_preprocessing()
+                # self._validate_preprocessing()
                 self._test_preprocessed = self._preprocess_all_data(self._test_indices)
                 self.test_windows = self._create_windows(self._test_indices)
                 self.test_dataset = self._ProcessedEncoderDecoderDataset(
@@ -964,7 +966,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                     self.add_relative_time_idx,
                 )
         elif stage == "predict":
-            self._validate_preprocessing()
+            # self._validate_preprocessing()
             predict_indices = torch.arange(len(self.time_series_dataset))
             self._predict_preprocessed = self._preprocess_all_data(predict_indices)
             self.predict_windows = self._create_windows(predict_indices)

@@ -7,6 +7,7 @@ import torch
 
 from pytorch_forecasting.data.encoders import (
     EncoderNormalizer,
+    GroupNormalizer,
     MultiNormalizer,
     NaNLabelEncoder,
     TorchNormalizer,
@@ -75,7 +76,7 @@ class ScalerAdapter:
             arr = _to_numpy(data)
             return arr if arr.ndim == 2 else arr[:, None]
 
-        if isinstance(self._scaler, NaNLabelEncoder):
+        if isinstance(self._scaler, (NaNLabelEncoder, GroupNormalizer)):
             if isinstance(data, pd.Series):
                 return data
             np_data = _to_numpy(data)
@@ -84,7 +85,7 @@ class ScalerAdapter:
         t = _to_tensor(data)
         return t.squeeze(-1) if (t.ndim == 2 and t.shape[1] == 1) else t
 
-    def fit(self, data: ArrayLike) -> "ScalerAdapter":
+    def fit(self, data: ArrayLike, X: pd.DataFrame = None) -> "ScalerAdapter":
         """Fit the scaler.
 
         Parameters
@@ -92,13 +93,28 @@ class ScalerAdapter:
         data : tensor, ndarray, or Series
             Shape ``(n_samples,)`` for single-target or
             ``(n_samples, n_targets)`` for multi-target.
+        X : pd.DataFrame, optional
+            Group columns. Required when scaler is GroupNormalizer or
+            when MultiNormalizer contains GroupNormalizer sub-normalizers.
         """
         if self._scaler is None:
             return self
+        if isinstance(self._scaler, GroupNormalizer):
+            assert X is not None, (
+                "GroupNormalizer requires X (DataFrame with group columns) "
+                "to be passed to fit()."
+            )
+            self._scaler.fit(self._prepare_input(data), X)
+            return self
+
+        if self.is_multi:
+            self._scaler.fit(self._prepare_input(data), X)
+            return self
+
         self._scaler.fit(self._prepare_input(data))
         return self
 
-    def transform(self, data: ArrayLike) -> torch.Tensor:
+    def transform(self, data: ArrayLike, X: pd.DataFrame = None) -> torch.Tensor:
         """Transform data, always returning a torch.Tensor.
 
         Parameters
@@ -106,6 +122,9 @@ class ScalerAdapter:
         data : tensor, ndarray, or Series
             Shape ``(n_samples,)`` for single-target or
             ``(n_samples, n_targets)`` for multi-target.
+        X : pd.DataFrame, optional
+            Group columns. Required when scaler is GroupNormalizer or
+            when MultiNormalizer contains GroupNormalizer sub-normalizers.
 
         Returns
         -------
@@ -117,13 +136,24 @@ class ScalerAdapter:
 
         prepared = self._prepare_input(data)
 
+        if isinstance(self._scaler, GroupNormalizer):
+            assert X is not None, (
+                "GroupNormalizer requires X (DataFrame with group columns) "
+                "to be passed to transform()."
+            )
+            result = self._scaler.transform(prepared, X)
+            return _to_tensor(result)
+
         if self._is_sklearn:
             original_shape = _to_numpy(data).shape
             result = self._scaler.transform(prepared).reshape(original_shape)
             return torch.tensor(result, dtype=torch.float32)
 
         if self.is_multi:
-            results = self._scaler.transform(prepared.T)
+            results = self._scaler.transform(
+                prepared.T if isinstance(prepared, torch.Tensor) else prepared.T,
+                X,
+            )
             return torch.stack([_to_tensor(r) for r in results], dim=-1)
 
         squeezed = (
@@ -133,10 +163,12 @@ class ScalerAdapter:
         result = _to_tensor(result)
         return result.unsqueeze(-1) if squeezed else result
 
-    def fit_transform(self, data: ArrayLike) -> torch.Tensor:
-        return self.fit(data).transform(data)
+    def fit_transform(self, data: ArrayLike, X: pd.DataFrame = None) -> torch.Tensor:
+        return self.fit(data, X).transform(data, X)
 
-    def fit_transform_sequence(self, data: ArrayLike) -> torch.Tensor:
+    def fit_transform_sequence(
+        self, data: ArrayLike, X: pd.DataFrame = None
+    ) -> torch.Tensor:
         """Fit-and-transform only per-sequence sub-normalizers; transform the rest.
 
         Used at ``__getitem__`` time for encoder windows. Non-per-sequence
@@ -157,9 +189,9 @@ class ScalerAdapter:
         """
         if not self.is_multi:
             return (
-                self.fit_transform(data)
+                self.fit_transform(data, X)
                 if self.fit_per_sequence
-                else self.transform(data)
+                else _to_tensor(data)
             )
 
         t = _to_tensor(data)
@@ -169,6 +201,6 @@ class ScalerAdapter:
         columns = []
         for idx, sub in enumerate(self._sub_adapters):
             col = t[:, idx]
-            col = sub.fit_transform(col) if sub.fit_per_sequence else col
+            col = sub.fit_transform(col, X) if sub.fit_per_sequence else col
             columns.append(col.unsqueeze(-1))
         return torch.cat(columns, dim=-1)
