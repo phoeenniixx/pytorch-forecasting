@@ -12,7 +12,7 @@ from pytorch_forecasting.data.encoders import (
     TorchNormalizer,
 )
 
-_SKLEARN_SCALERS = (RobustScaler, StandardScaler, NaNLabelEncoder)
+_SKLEARN_SCALERS = (RobustScaler, StandardScaler)
 
 ArrayLike = torch.Tensor | np.ndarray | pd.Series
 
@@ -74,6 +74,12 @@ class ScalerAdapter:
                 return data if data.ndim == 2 else data.unsqueeze(-1)
             arr = _to_numpy(data)
             return arr if arr.ndim == 2 else arr[:, None]
+
+        if isinstance(self._scaler, NaNLabelEncoder):
+            if isinstance(data, pd.Series):
+                return data
+            np_data = _to_numpy(data)
+            return pd.Series(np_data.squeeze() if np_data.ndim == 2 else np_data)
 
         t = _to_tensor(data)
         return t.squeeze(-1) if (t.ndim == 2 and t.shape[1] == 1) else t

@@ -483,7 +483,7 @@ def test_multivariate_target():
         "auto",
         TorchNormalizer(),
         EncoderNormalizer(),
-        # NaNLabelEncoder(add_nan=True),
+        NaNLabelEncoder(add_nan=True),
     ],
 )
 def test_target_normalizers(sample_timeseries_data, normalizer):
@@ -527,10 +527,11 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
 @pytest.mark.parametrize(
     "scaler_type",
     [
-        TorchNormalizer,
-        StandardScaler,
-        RobustScaler,
-        EncoderNormalizer,
+        TorchNormalizer(),
+        StandardScaler(),
+        RobustScaler(),
+        EncoderNormalizer(),
+        NaNLabelEncoder(add_nan=True),
     ],
 )
 def test_feature_scaling(sample_timeseries_data, scaler_type):
@@ -542,8 +543,8 @@ def test_feature_scaling(sample_timeseries_data, scaler_type):
     - Output format is preserved
     """
     scalers = {
-        "cont_feat1": scaler_type(),
-        "cont_feat2": scaler_type(),
+        "cont_feat1": scaler_type,
+        "cont_feat2": scaler_type,
     }
 
     dm_no_scale = EncoderDecoderTimeSeriesDataModule(
