@@ -414,6 +414,10 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             X = self._get_group_dataframe(series_idx, target.shape[0])
             target = self._target_normalizer.transform(target, X)
 
+            for i, is_enc in enumerate(self._target_normalizer.label_encoder_mask):
+                if is_enc:
+                    target_original[:, i] = target[:, i]
+
         # applying feature scalers.
         if self._feature_scalers_fitted and self.continuous_indices:
             normalized_cont = continuous.clone()

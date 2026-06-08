@@ -59,6 +59,17 @@ class ScalerAdapter:
             self._sub_adapters = [ScalerAdapter(norm) for norm in scaler.normalizers]
 
     @property
+    def is_label_encoder(self) -> bool:
+        return isinstance(self._scaler, NaNLabelEncoder)
+
+    @property
+    def label_encoder_mask(self) -> list[bool]:
+        """Per-target bool list indicating which sub-normalizers are label encoders."""
+        if self.is_multi:
+            return [sub.is_label_encoder for sub in self._sub_adapters]
+        return [self.is_label_encoder]
+
+    @property
     def fit_per_sequence(self) -> bool:
         """True if any normalizer must be (re-)fit at __getitem__ time."""
         if self.is_multi:
