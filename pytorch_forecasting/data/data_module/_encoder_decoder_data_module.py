@@ -69,6 +69,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         Transformer that takes group_ids, target and time_idx to normalize targets.
         You can choose from
         :py:class:`~pytorch_forecasting.data.encoders.TorchNormalizer`,
+        :py:class:`~pytorch_forecasting.data.encoders.GroupNormalizer`,
         :py:class:`~pytorch_forecasting.data.encoders.NaNLabelEncoder`,
         :py:class:`~pytorch_forecasting.data.encoders.EncoderNormalizer`
         (on which overfitting tests will fail)
@@ -76,7 +77,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         :py:class`~pytorch_forecasting.data.encoders.MultiNormalizer`.
         By default an :py:class:`~pytorch_forecasting.data.encoders.TorchNormalizer` is
         chosen.
-        todo need to add an "auto" normalizer selector and GroupNormalizer support
+        todo need to add an "auto" normalizer selector
 
     categorical_encoders : Optional[Dict[str, NaNLabelEncoder]], default=None
         Dictionary of categorical encoders.
