@@ -13,6 +13,8 @@ from typing import Any, Optional, Union
 from warnings import warn
 
 from lightning.pytorch import LightningDataModule
+import numpy as np
+import pandas as pd
 from sklearn.preprocessing import RobustScaler, StandardScaler
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -326,6 +328,37 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             self._metadata = self._prepare_metadata()
         return self._metadata
 
+    def _get_group_dataframe(
+        self, series_idx: int, n_timesteps: int
+    ) -> pd.DataFrame | None:
+        """Build a DataFrame with group columns for a given series.
+
+        Parameters
+        ----------
+        series_idx : int
+            Index of the time series in the dataset.
+        n_timesteps : int
+            Number of timesteps to repeat group values for.
+
+        Returns
+        -------
+        pd.DataFrame or None
+            DataFrame with group columns repeated for each timestep,
+            or None if no group columns are defined.
+        """
+        ts = self.time_series_dataset
+        if not ts._group:
+            return None
+
+        group_id = ts._group_ids[series_idx]
+        if not isinstance(group_id, tuple):
+            group_id = (group_id,)
+
+        group_data = {
+            col: np.repeat(val, n_timesteps) for col, val in zip(ts._group, group_id)
+        }
+        return pd.DataFrame(group_data)
+
     def _preprocess_data(self, series_idx: torch.Tensor) -> list[dict[str, Any]]:
         """Preprocess the data before feeding it into _ProcessedEncoderDecoderDataset.
 
@@ -377,11 +410,13 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         target_original = target.clone()
 
         if self._target_normalizer is not None and self._target_normalizer_fitted:
-            target = self._target_normalizer.transform(target)
+            X = self._get_group_dataframe(series_idx, target.shape[0])
+            target = self._target_normalizer.transform(target, X)
 
         # applying feature scalers.
         if self._feature_scalers_fitted and self.continuous_indices:
             normalized_cont = continuous.clone()
+            X = self._get_group_dataframe(series_idx, continuous.shape[0])
             feature_names = [
                 self.time_series_metadata["cols"]["x"][idx]
                 for idx in self.continuous_indices
@@ -390,7 +425,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             for feat_idx, feat_name in enumerate(feature_names):
                 if feat_name in self._scalers:
                     normalized_cont[:, feat_idx] = self._scalers[feat_name].transform(
-                        continuous[:, feat_idx]
+                        continuous[:, feat_idx], X
                     )
             continuous = normalized_cont
 
@@ -419,16 +454,26 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             return
 
         all_targets = []
+        all_groups = []
         for idx in train_indices:
+            series_idx = idx.item()
             sample = self.time_series_dataset[idx]
             target = sample["y"]
             all_targets.append(target)
+            n_timesteps = len(target)
+            all_groups.append(self._get_group_dataframe(series_idx, n_timesteps))
 
         if not all_targets:
             return
 
         all_targets = torch.cat(all_targets, dim=0)
-        self._target_normalizer.fit(all_targets)
+        X = (
+            pd.concat(all_groups, ignore_index=True)
+            if all_groups[0] is not None
+            else None
+        )
+
+        self._target_normalizer.fit(all_targets, X)
         self._target_normalizer_fitted = True
 
     def _fit_scalers(self, train_indices):
@@ -447,14 +492,25 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                 continue
             feat_idx = features_to_scale[feat_name]
             feat_data = []
+            all_groups = []
 
             for idx in train_indices:
+                series_idx = idx.item()
                 sample = self.time_series_dataset[idx]
                 feature_data = sample["x"][:, feat_idx]
                 feat_data.append(feature_data)
-            feat_data = torch.cat(feat_data, dim=0)
+                all_groups.append(
+                    self._get_group_dataframe(series_idx, len(feature_data))
+                )
 
-            adapter.fit(feat_data)
+            feat_data = torch.cat(feat_data, dim=0)
+            X = (
+                pd.concat(all_groups, ignore_index=True)
+                if all_groups[0] is not None
+                else None
+            )
+            adapter.fit(feat_data, X)
+
         self._feature_scalers_fitted = True
 
     def _preprocess_all_data(self, indices: torch.Tensor) -> dict[dict[str, Any]]:

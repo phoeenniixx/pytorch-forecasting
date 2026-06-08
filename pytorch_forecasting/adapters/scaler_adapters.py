@@ -133,7 +133,7 @@ class ScalerAdapter:
         """
         if self._scaler is None:
             return _to_tensor(data)
-
+        input_was_2d = isinstance(data, torch.Tensor) and data.ndim == 2
         prepared = self._prepare_input(data)
 
         if isinstance(self._scaler, GroupNormalizer):
@@ -141,8 +141,8 @@ class ScalerAdapter:
                 "GroupNormalizer requires X (DataFrame with group columns) "
                 "to be passed to transform()."
             )
-            result = self._scaler.transform(prepared, X)
-            return _to_tensor(result)
+            result = _to_tensor(self._scaler.transform(prepared, X))
+            return result.unsqueeze(-1) if input_was_2d else result
 
         if self._is_sklearn:
             original_shape = _to_numpy(data).shape

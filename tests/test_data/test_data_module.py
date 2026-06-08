@@ -483,6 +483,7 @@ def test_multivariate_target():
         "auto",
         TorchNormalizer(),
         EncoderNormalizer(),
+        GroupNormalizer(),
         NaNLabelEncoder(add_nan=True),
     ],
 )
@@ -531,6 +532,7 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
         StandardScaler(),
         RobustScaler(),
         EncoderNormalizer(),
+        GroupNormalizer(),
         NaNLabelEncoder(add_nan=True),
     ],
 )
