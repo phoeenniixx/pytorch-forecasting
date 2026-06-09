@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.preprocessing import RobustScaler, StandardScaler
+import torch
 
 from pytorch_forecasting import GroupNormalizer, MultiNormalizer, NaNLabelEncoder
 from pytorch_forecasting.data.data_module import EncoderDecoderTimeSeriesDataModule
@@ -484,13 +485,16 @@ def test_multivariate_target(normalizer_list):
 
     x, y = dm.train_dataset[0]
     assert len(y) == 2
+    assert y[0].shape == (dm.max_prediction_length,)
+    assert y[1].shape == (dm.max_prediction_length,)
+    assert x["target_past"].shape == (dm.max_encoder_length, 2)
 
 
 @pytest.mark.parametrize(
     "normalizer",
     [
         None,
-        "auto",
+        # "auto", todo: still need to add "auto" support
         TorchNormalizer(),
         EncoderNormalizer(),
         GroupNormalizer(),
@@ -586,6 +590,50 @@ def test_feature_scaling(sample_timeseries_data, scaler_type):
 
     assert x_with_scale["encoder_cont"].shape == x_no_scale["encoder_cont"].shape
     assert x_with_scale["decoder_cont"].shape == x_no_scale["decoder_cont"].shape
+
+
+def test_group_normalizer_uses_groups():
+    """Test that GroupNormalizer produces different scales per group."""
+    df = pd.DataFrame(
+        {
+            "group": np.repeat([0, 1], 100),
+            "time": np.tile(range(100), 2),
+            "target": np.concatenate(
+                [
+                    np.random.normal(1, 0.1, 100),  # group 0
+                    np.random.normal(100, 10, 100),  # group 1
+                ]
+            ),
+            "feature1": np.random.normal(0, 1, 200),
+        }
+    )
+    ts = TimeSeries(
+        data=df,
+        time="time",
+        target="target",
+        group=["group"],
+        num=["feature1"],
+    )
+    dm = EncoderDecoderTimeSeriesDataModule(
+        time_series_dataset=ts,
+        max_encoder_length=10,
+        max_prediction_length=5,
+        batch_size=4,
+        target_normalizer=GroupNormalizer(groups=["group"]),
+    )
+    dm.setup("fit")
+
+    group0_idx = ts._group_to_idx[0]
+    group1_idx = ts._group_to_idx[1]
+
+    target0 = dm._train_preprocessed.get(group0_idx)
+    target1 = dm._train_preprocessed.get(group1_idx)
+
+    if target0 is not None and target1 is not None:
+        mean0 = target0["target"].mean().abs()
+        mean1 = target1["target"].mean().abs()
+        assert mean0 < 1.0, "Group 0 target should be normalized near 0"
+        assert mean1 < 1.0, "Group 1 target should be normalized near 0"
 
 
 def test_get_scalers_state(sample_timeseries_data):

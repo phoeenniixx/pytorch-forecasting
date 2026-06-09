@@ -158,7 +158,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         super().__init__()
 
         if isinstance(target_normalizer, str) and target_normalizer.lower() == "auto":
-            self._target_normalizer = ScalerAdapter(TorchNormalizer(method="identity"))
+            self._target_normalizer = ScalerAdapter(TorchNormalizer())
         elif isinstance(target_normalizer, (tuple, list)):
             self._target_normalizer = ScalerAdapter(
                 MultiNormalizer(list(target_normalizer))
