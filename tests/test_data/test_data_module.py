@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.preprocessing import RobustScaler, StandardScaler
+from sklearn.preprocessing import (
+    MaxAbsScaler,
+    MinMaxScaler,
+    RobustScaler,
+    StandardScaler,
+)
 import torch
 
 from pytorch_forecasting import GroupNormalizer, MultiNormalizer, NaNLabelEncoder
@@ -547,7 +552,8 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
         RobustScaler(),
         EncoderNormalizer(),
         GroupNormalizer(),
-        NaNLabelEncoder(add_nan=True),
+        MinMaxScaler(),
+        MaxAbsScaler(),
     ],
 )
 def test_feature_scaling(sample_timeseries_data, scaler_type):

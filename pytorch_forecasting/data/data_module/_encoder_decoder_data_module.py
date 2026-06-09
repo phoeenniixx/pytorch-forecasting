@@ -83,8 +83,8 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         Dictionary of categorical encoders.
 
     scalers :
-    Optional[Dict[str, Union[StandardScaler, RobustScaler,
-                        TorchNormalizer, EncoderNormalizer]]], default=None
+    Optional[Dict[str, Union[RobustScaler, StandardScaler, MinMaxScaler, MaxAbsScaler,
+             GroupNormalizer, TorchNormalizer, EncoderNormalizer]]], default=None
         Dictionary of feature scalers.
 
     randomize_length : Union[None, Tuple[float, float], bool], default=False

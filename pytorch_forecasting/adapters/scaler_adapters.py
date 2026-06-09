@@ -2,7 +2,12 @@ from typing import Union
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import RobustScaler, StandardScaler
+from sklearn.preprocessing import (
+    MaxAbsScaler,
+    MinMaxScaler,
+    RobustScaler,
+    StandardScaler,
+)
 import torch
 
 from pytorch_forecasting.data.encoders import (
@@ -13,7 +18,7 @@ from pytorch_forecasting.data.encoders import (
     TorchNormalizer,
 )
 
-_SKLEARN_SCALERS = (RobustScaler, StandardScaler)
+_SKLEARN_SCALERS = (RobustScaler, StandardScaler, MinMaxScaler, MaxAbsScaler)
 
 ArrayLike = torch.Tensor | np.ndarray | pd.Series
 
