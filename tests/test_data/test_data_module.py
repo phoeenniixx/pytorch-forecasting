@@ -467,7 +467,7 @@ def test_multivariate_target():
         max_encoder_length=10,
         max_prediction_length=5,
         batch_size=4,
-        target_normalizer=MultiNormalizer([EncoderNormalizer(), TorchNormalizer()]),
+        target_normalizer=MultiNormalizer([GroupNormalizer(), TorchNormalizer()]),
     )
 
     dm.setup()

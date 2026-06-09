@@ -82,8 +82,6 @@ class ScalerAdapter:
             return _to_numpy(data).reshape(-1, 1)
 
         if self.is_multi:
-            if isinstance(data, torch.Tensor):
-                return data if data.ndim == 2 else data.unsqueeze(-1)
             arr = _to_numpy(data)
             return arr if arr.ndim == 2 else arr[:, None]
 
@@ -110,19 +108,21 @@ class ScalerAdapter:
         """
         if self._scaler is None:
             return self
+
+        prepared = self._prepare_input(data)
         if isinstance(self._scaler, GroupNormalizer):
             assert X is not None, (
                 "GroupNormalizer requires X (DataFrame with group columns) "
                 "to be passed to fit()."
             )
-            self._scaler.fit(self._prepare_input(data), X)
+            self._scaler.fit(prepared, X)
             return self
 
         if self.is_multi:
-            self._scaler.fit(self._prepare_input(data), X)
+            self._scaler.fit(prepared, X)
             return self
 
-        self._scaler.fit(self._prepare_input(data))
+        self._scaler.fit(prepared)
         return self
 
     def transform(self, data: ArrayLike, X: pd.DataFrame = None) -> torch.Tensor:
@@ -161,10 +161,7 @@ class ScalerAdapter:
             return torch.tensor(result, dtype=torch.float32)
 
         if self.is_multi:
-            results = self._scaler.transform(
-                prepared.T if isinstance(prepared, torch.Tensor) else prepared.T,
-                X,
-            )
+            results = self._scaler.transform(prepared.T, X)
             return torch.stack([_to_tensor(r) for r in results], dim=-1)
 
         squeezed = (
