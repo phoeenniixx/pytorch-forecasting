@@ -439,7 +439,18 @@ def test_different_train_val_test_split(sample_timeseries_data):
     assert len(dm._test_indices) == total_series - expected_train - expected_val
 
 
-def test_multivariate_target():
+@pytest.mark.parametrize(
+    "normalizer_list",
+    [
+        [TorchNormalizer(), EncoderNormalizer()],
+        [EncoderNormalizer(), GroupNormalizer()],
+        [GroupNormalizer(), NaNLabelEncoder(add_nan=True)],
+        [TorchNormalizer(), GroupNormalizer()],
+        [NaNLabelEncoder(add_nan=True), EncoderNormalizer()],
+        [EncoderNormalizer(), TorchNormalizer()],
+    ],
+)
+def test_multivariate_target(normalizer_list):
     """Test with multivariate target (multiple target columns).
 
     Verifies correct handling of multivariate targets in data pipeline."""
@@ -461,13 +472,12 @@ def test_multivariate_target():
         group=["group"],
         num=["feature1", "feature2"],
     )
-
     dm = EncoderDecoderTimeSeriesDataModule(
         time_series_dataset=ts,
         max_encoder_length=10,
         max_prediction_length=5,
         batch_size=4,
-        target_normalizer=MultiNormalizer([GroupNormalizer(), TorchNormalizer()]),
+        target_normalizer=normalizer_list,
     )
 
     dm.setup()
