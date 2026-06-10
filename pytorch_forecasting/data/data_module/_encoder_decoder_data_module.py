@@ -158,13 +158,16 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         super().__init__()
 
         if isinstance(target_normalizer, str) and target_normalizer.lower() == "auto":
-            self._target_normalizer = ScalerAdapter(TorchNormalizer())
+            self._target_normalizer = None
+            self._auto_normalizer = True
         elif isinstance(target_normalizer, (tuple, list)):
             self._target_normalizer = ScalerAdapter(
                 MultiNormalizer(list(target_normalizer))
             )
+            self._auto_normalizer = False
         else:
             self._target_normalizer = ScalerAdapter(self.target_normalizer)
+            self._auto_normalizer = False
 
         self.time_series_metadata = time_series_dataset.get_metadata()
         self._min_prediction_length = min_prediction_length or max_prediction_length
@@ -980,6 +983,109 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         self._feature_scalers_fitted = state["feature_scalers_fitted"]
         self._build_cont_scalers()
 
+    def _compute_data_properties(self, train_indices: torch.Tensor) -> dict:
+        """Scan training targets to determine per-target type, positivity, skewness.
+
+        Returns
+        -------
+        dict with keys:
+            - ``target_type``: dict[str, str]
+                if target is``"categorical"`` or ``"real"``
+            - ``target_positive``: dict[str, bool]
+                True if all values strictly positive
+            - ``target_skew``: dict[str, float]
+                Pearson moment skewness
+        """
+        target_names = self.time_series_metadata["cols"]["y"]
+        col_type = self.time_series_metadata["col_type"]
+        per_target = {name: [] for name in target_names}
+
+        for idx in train_indices:
+            sample = self.time_series_dataset[idx.item()]
+            target = sample["y"]
+            for i, name in enumerate(target_names):
+                per_target[name].append(target[..., i] if target.ndim > 1 else target)
+
+        target_type, target_positive, target_skew = {}, {}, {}
+
+        for name in target_names:
+            target_type[name] = "categorical" if col_type.get(name) == "C" else "real"
+
+            valid_vals = torch.cat(per_target[name]).float()
+            valid_vals = valid_vals[~torch.isnan(valid_vals)]
+
+            if target_type[name] == "categorical" or valid_vals.numel() == 0:
+                target_positive[name] = False
+                target_skew[name] = 0.0
+                continue
+
+            target_positive[name] = bool((valid_vals > 0).all())
+            mean = valid_vals.mean()
+            std = valid_vals.std()
+            target_skew[name] = (
+                0.0 if std == 0 else float(((valid_vals - mean) ** 3).mean() / (std**3))
+            )
+
+        return {
+            "target_type": target_type,
+            "target_positive": target_positive,
+            "target_skew": target_skew,
+        }
+
+    def _get_auto_normalizer(self, data_properties: dict) -> NORMALIZER:
+        """Select normalizer based on data properties and current module config.
+
+        Parameters
+        ----------
+        data_properties : dict
+            As returned by ``_compute_data_properties``.
+        """
+        target_names = self.time_series_metadata["cols"]["y"]
+        has_groups = bool(self.time_series_dataset._group)
+        use_encoder_normalizer = (
+            self.max_encoder_length > 20 and self._min_encoder_length > 1
+        )
+
+        normalizers = []
+        for target in target_names:
+            if data_properties["target_type"][target] == "categorical":
+                if self.add_target_scales:
+                    warn(
+                        "Target scales will be only added for continuous targets",
+                        UserWarning,
+                    )
+                normalizers.append(NaNLabelEncoder())
+                continue
+
+            if data_properties["target_positive"][target]:
+                transformer = (
+                    "log" if data_properties["target_skew"][target] > 2.5 else "relu"
+                )
+            else:
+                transformer = None
+
+            if use_encoder_normalizer:
+                normalizers.append(EncoderNormalizer(transformation=transformer))
+            elif has_groups:
+                from pytorch_forecasting.data.encoders import GroupNormalizer
+
+                normalizers.append(GroupNormalizer(transformation=transformer))
+            else:
+                normalizers.append(TorchNormalizer(transformation=transformer))
+
+        return MultiNormalizer(normalizers) if self.n_targets > 1 else normalizers[0]
+
+    def _resolve_target_normalizer(self, train_indices: torch.Tensor) -> None:
+        """Resolve 'auto' target normalizer and wrap in ScalerAdapter.
+
+        No-op if normalizer was explicitly provided.
+        """
+        if not self._auto_normalizer:
+            return
+        data_properties = self._compute_data_properties(train_indices)
+        normalizer = self._get_auto_normalizer(data_properties)
+        self._target_normalizer = ScalerAdapter(normalizer)
+
     def setup(self, stage: str | None = None):
         """Prepare the datasets for training, validation, testing, or prediction.
 
@@ -1005,7 +1111,9 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         self._test_indices = self._split_indices[self._train_size + self._val_size :]
 
         if stage is None or stage == "fit":
+            self._resolve_target_normalizer(self._train_indices)
             if not self._target_normalizer_fitted:
+                print(self._target_normalizer_fitted, self._target_normalizer._scaler)
                 self._fit_target_normalizer(self._train_indices)
             if not self._feature_scalers_fitted:
                 self._fit_scalers(self._train_indices)

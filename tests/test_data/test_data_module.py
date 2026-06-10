@@ -573,7 +573,7 @@ def test_multivariate_target_scale(normalizer_list):
     "normalizer",
     [
         None,
-        # "auto", todo: still need to add "auto" support
+        "auto",
         TorchNormalizer(),
         EncoderNormalizer(),
         GroupNormalizer(),
@@ -591,8 +591,8 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
     """
     dm_no_norm = EncoderDecoderTimeSeriesDataModule(
         time_series_dataset=sample_timeseries_data,
-        max_encoder_length=24,
-        max_prediction_length=12,
+        max_encoder_length=15,
+        max_prediction_length=5,
         batch_size=4,
         target_normalizer=None,
     )
@@ -600,8 +600,8 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
 
     dm_with_norm = EncoderDecoderTimeSeriesDataModule(
         time_series_dataset=sample_timeseries_data,
-        max_encoder_length=24,
-        max_prediction_length=12,
+        max_encoder_length=15,
+        max_prediction_length=5,
         batch_size=4,
         target_normalizer=normalizer,
     )
