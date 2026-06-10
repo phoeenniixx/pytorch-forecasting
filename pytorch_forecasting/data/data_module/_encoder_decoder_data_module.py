@@ -75,9 +75,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         (on which overfitting tests will fail)
         or ``None`` for using no normalizer. For multiple targets, use a
         :py:class`~pytorch_forecasting.data.encoders.MultiNormalizer`.
-        By default an :py:class:`~pytorch_forecasting.data.encoders.TorchNormalizer` is
-        chosen.
-        todo need to add an "auto" normalizer selector
+        By default an appropriate normalizer is chosen automatically.
 
     categorical_encoders : Optional[Dict[str, NaNLabelEncoder]], default=None
         Dictionary of categorical encoders.
