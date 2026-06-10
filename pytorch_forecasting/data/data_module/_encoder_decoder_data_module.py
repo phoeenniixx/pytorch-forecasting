@@ -435,7 +435,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                         normalized_cont[:, feat_idx] = adapter.transform(
                             continuous[:, feat_idx], X
                         )
-                continuous = normalized_cont
+            continuous = normalized_cont
 
         return {
             "features": {"categorical": categorical, "continuous": continuous},
