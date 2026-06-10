@@ -496,6 +496,80 @@ def test_multivariate_target(normalizer_list):
 
 
 @pytest.mark.parametrize(
+    "normalizer_list",
+    [
+        [TorchNormalizer(), EncoderNormalizer()],
+        [EncoderNormalizer(), GroupNormalizer()],
+        [GroupNormalizer(), NaNLabelEncoder(add_nan=True)],
+        [TorchNormalizer(), GroupNormalizer()],
+        [NaNLabelEncoder(add_nan=True), EncoderNormalizer()],
+        [EncoderNormalizer(), TorchNormalizer()],
+    ],
+)
+def test_multivariate_target_scale(normalizer_list):
+    """Test that target_scale is correctly computed for multivariate targets.
+
+    Verifies:
+    - target_scale is a list of length n_targets for multi-target
+    - each element is a scalar tensor
+    - scale values are positive and finite
+    - scale reflects the original (pre-normalization) target magnitude
+    """
+    np.random.seed(42)
+    target1 = np.random.normal(0, 1, 100)
+    target2 = np.random.normal(0, 100, 100)
+
+    df = pd.DataFrame(
+        {
+            "group": np.repeat([0, 1], 50),
+            "time": np.tile(pd.date_range("2020-01-01", periods=50), 2),
+            "target1": target1,
+            "target2": target2,
+            "feature1": np.random.normal(0, 1, 100),
+        }
+    )
+
+    ts = TimeSeries(
+        data=df,
+        time="time",
+        target=["target1", "target2"],
+        group=["group"],
+        num=["feature1"],
+    )
+    dm = EncoderDecoderTimeSeriesDataModule(
+        time_series_dataset=ts,
+        max_encoder_length=10,
+        max_prediction_length=5,
+        batch_size=4,
+        target_normalizer=normalizer_list,
+    )
+    dm.setup()
+
+    x, y = dm.train_dataset[0]
+    target_scale = x["target_scale"]
+
+    assert isinstance(
+        target_scale, list
+    ), f"expected list for multi-target, got {type(target_scale)}"
+    assert len(target_scale) == 2, f"expected 2 scale values, got {len(target_scale)}"
+
+    for i, scale in enumerate(target_scale):
+        assert isinstance(
+            scale, torch.Tensor
+        ), f"target_scale[{i}] should be a Tensor, got {type(scale)}"
+        assert (
+            scale.shape == ()
+        ), f"target_scale[{i}] should be scalar, got shape {scale.shape}"
+        assert torch.isfinite(scale), f"target_scale[{i}] is not finite: {scale}"
+        assert scale > 0, f"target_scale[{i}] should be positive, got {scale}"
+
+    assert target_scale[1] > target_scale[0], (
+        f"expected target_scale[1] > target_scale[0] given std ratio, "
+        f"got {target_scale[1]:.4f} vs {target_scale[0]:.4f}"
+    )
+
+
+@pytest.mark.parametrize(
     "normalizer",
     [
         None,

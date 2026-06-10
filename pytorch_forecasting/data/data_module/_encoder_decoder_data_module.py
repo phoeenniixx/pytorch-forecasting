@@ -411,8 +411,9 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         target_original = target.clone()
 
         if self._target_normalizer is not None and self._target_normalizer_fitted:
-            X = self._get_group_dataframe(series_idx, target.shape[0])
-            target = self._target_normalizer.transform(target, X)
+            if not self._target_normalizer.fit_per_sequence:
+                X = self._get_group_dataframe(series_idx, target.shape[0])
+                target = self._target_normalizer.transform(target, X)
 
             for i, is_enc in enumerate(self._target_normalizer.label_encoder_mask):
                 if is_enc:
@@ -429,10 +430,12 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
 
             for feat_idx, feat_name in enumerate(feature_names):
                 if feat_name in self._scalers:
-                    normalized_cont[:, feat_idx] = self._scalers[feat_name].transform(
-                        continuous[:, feat_idx], X
-                    )
-            continuous = normalized_cont
+                    adapter = self._scalers[feat_name]
+                    if not adapter.fit_per_sequence:
+                        normalized_cont[:, feat_idx] = adapter.transform(
+                            continuous[:, feat_idx], X
+                        )
+                continuous = normalized_cont
 
         return {
             "features": {"categorical": categorical, "continuous": continuous},
@@ -656,7 +659,8 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             target_past = data["target"][encoder_indices]
 
             # apply encoder normalizer on target_past.
-            if self.data_module._target_normalizer is not None:
+            normalizer = self.data_module._target_normalizer
+            if normalizer is not None and normalizer.fit_per_sequence:
                 target_past = (
                     self.data_module._target_normalizer.fit_transform_sequence(
                         target_past
@@ -664,11 +668,22 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                 )
 
             target_original_past = data["target_original"][encoder_indices]
-            target_scale = (
-                target_original_past[~torch.isnan(target_original_past)].abs().mean()
-            )  # noqa: E501
-            if torch.isnan(target_scale) or target_scale == 0:
-                target_scale = torch.tensor(1.0)
+            valid_mask = ~torch.isnan(target_original_past)
+            abs_vals = target_original_past.abs().masked_fill(~valid_mask, 0.0)
+            counts = valid_mask.sum(dim=0).clamp(min=1)
+            target_scale_vec = abs_vals.sum(dim=0) / counts
+            target_scale_vec = torch.where(
+                (target_scale_vec == 0) | torch.isnan(target_scale_vec),
+                torch.ones_like(target_scale_vec),
+                target_scale_vec,
+            )
+
+            if self.data_module.n_targets > 1:
+                target_scale = [
+                    target_scale_vec[i] for i in range(self.data_module.n_targets)
+                ]
+            else:
+                target_scale = target_scale_vec.squeeze(0)
 
             encoder_mask = (
                 data["time_mask"][encoder_indices]
@@ -688,9 +703,10 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             # apply encoder normalizer on cont features (assuming the presence of
             # EncoderNormalizer)
             for feat_idx, adapter in self.data_module._cont_scalers:
-                encoder_cont[:, feat_idx] = adapter.fit_transform_sequence(
-                    encoder_cont[:, feat_idx]
-                )
+                if adapter.fit_per_sequence:
+                    encoder_cont[:, feat_idx] = adapter.fit_transform_sequence(
+                        encoder_cont[:, feat_idx]
+                    )
 
             features = data["features"]
             metadata = self.data_module.time_series_metadata
@@ -1087,10 +1103,19 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             "target_past": torch.stack([x["target_past"] for x, _ in batch]),
             "encoder_time_idx": torch.stack([x["encoder_time_idx"] for x, _ in batch]),
             "decoder_time_idx": torch.stack([x["decoder_time_idx"] for x, _ in batch]),
-            "target_scale": torch.stack([x["target_scale"] for x, _ in batch]),
             "encoder_mask": torch.stack([x["encoder_mask"] for x, _ in batch]),
             "decoder_mask": torch.stack([x["decoder_mask"] for x, _ in batch]),
         }
+        if isinstance(batch[0][0]["target_scale"], list | tuple):
+            num_targets = len(batch[0][0]["target_scale"])
+            target_scale = [
+                torch.stack([x["target_scale"][i] for x, _ in batch])
+                for i in range(num_targets)
+            ]
+        else:
+            target_scale = torch.stack([x["target_scale"] for x, _ in batch])
+
+        x_batch["target_scale"] = target_scale
 
         if "static_categorical_features" in batch[0][0]:
             x_batch["static_categorical_features"] = torch.stack(
