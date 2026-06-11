@@ -542,28 +542,6 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             preprocessed_data[series_idx] = self._preprocess_data(series_idx)
         return preprocessed_data
 
-    def _validate_preprocessing(self):
-        """Validate preprocessing by checking if scalers and normalizers are fitted
-        on training data."""
-        # todo: use this method for validation when saving and loading of scalers
-        #  is added and supported completely
-
-        if self._target_normalizer is not None and not self._target_normalizer_fitted:  # noqa: E501
-            raise RuntimeError(
-                "Cannot setup test stage: target_normalizer is configured "
-                "but not fitted. You must call setup('fit') first on this"
-                " DataModule instance or use the same DataModule instance "
-                "that was used for training."
-            )
-
-        if self._scalers and not self._feature_scalers_fitted:  # noqa: E501
-            raise RuntimeError(
-                "Cannot setup test stage: feature scalers are configured "
-                "but not fitted. You must call setup('fit') first on this "
-                "DataModule instance or use the same DataModule instance "
-                "that was used for training."
-            )
-
     class _ProcessedEncoderDecoderDataset(Dataset):
         """PyTorch Dataset for processed encoder-decoder time series data.
 
@@ -869,118 +847,6 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
 
         return windows
 
-    def get_scalers_state(self) -> dict:
-        """Get the current state of all scalers and normalizers for persistence.
-
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - target_normalizer: The target normalizer instance(s)
-            - target_normalizer_fitted: Boolean indicating if fitted
-            - feature_scalers: Dictionary of feature scalers
-            - feature_scalers_fitted: Boolean indicating if fitted
-        """
-        return {
-            "target_normalizer": self._target_normalizer,
-            "target_normalizer_fitted": self._target_normalizer_fitted,
-            "feature_scalers": self._scalers,
-            "feature_scalers_fitted": self._feature_scalers_fitted,
-        }
-
-    def set_scalers_state(self, state: dict):
-        """Set the state of scalers and normalizers from loaded state.
-
-        This method receives scaler state from BasePkg and performs full validation
-        to ensure compatibility with the current DataModule configuration.
-
-        Parameters
-        ----------
-        state : dict
-            Dictionary containing scaler state with keys:
-            - target_normalizer
-            - target_normalizer_fitted
-            - feature_scalers
-            - feature_scalers_fitted
-        """
-        if not isinstance(state, dict):
-            raise TypeError(f"Expected dict, got {type(state).__name__}")
-
-        required_keys = {
-            "target_normalizer",
-            "target_normalizer_fitted",
-            "feature_scalers",
-            "feature_scalers_fitted",
-        }
-
-        missing_keys = required_keys - set(state.keys())
-        if missing_keys:
-            raise ValueError(f"Missing required keys in scaler state: {missing_keys}")
-        loaded_target_normalizer = state["target_normalizer"]
-        if self._target_normalizer is None and loaded_target_normalizer is not None:
-            raise ValueError(
-                "Loaded target normalizer is not None, but no target normalizer "
-                "is configured in this DataModule."
-            )
-
-        if self._target_normalizer is not None and loaded_target_normalizer is None:
-            raise ValueError(
-                "No target normalizer found in loaded state, but this DataModule "
-                "expects a fitted target normalizer."
-            )
-
-        if self._target_normalizer is not None and loaded_target_normalizer is not None:
-            loaded_inner = (
-                loaded_target_normalizer._scaler
-                if isinstance(loaded_target_normalizer, ScalerAdapter)
-                else loaded_target_normalizer
-            )
-            current_inner = self._target_normalizer._scaler
-            if not isinstance(loaded_inner, current_inner.__class__):
-                raise TypeError(
-                    f"Loaded normalizer type {type(loaded_inner).__name__} "
-                    f"does not match configured type {type(current_inner).__name__}."
-                )
-        loaded_feature_scalers = state["feature_scalers"]
-        if not isinstance(loaded_feature_scalers, dict):
-            raise TypeError(
-                f"Expected feature_scalers to be dict, "
-                f"got {type(loaded_feature_scalers).__name__}"
-            )
-
-        # Check for unexpected and missing features
-        unexpected_keys = set(loaded_feature_scalers.keys()) - set(self._scalers.keys())
-        if unexpected_keys:
-            raise ValueError(
-                f"Loaded scalers contain unexpected feature keys: {unexpected_keys}. "
-                f"Expected keys: {set(self._scalers.keys())}"
-            )
-
-        missing_keys = set(self._scalers.keys()) - set(loaded_feature_scalers.keys())
-        if missing_keys:
-            raise ValueError(
-                f"Loaded scalers are missing expected feature keys: {missing_keys}. "
-                f"Loaded keys: {set(loaded_feature_scalers.keys())}"
-            )
-
-        # Validate scaler types for each feature
-        for key, loaded_scaler in loaded_feature_scalers.items():
-            if key in self._scalers and not isinstance(
-                loaded_scaler, self._scalers[key].__class__
-            ):
-                raise TypeError(
-                    f"Loaded scaler for '{key}' has"
-                    f" type {type(loaded_scaler).__name__} "
-                    f"but configured scaler has type"
-                    f" {type(self._scalers[key]).__name__}"
-                )
-        # Validation passed, set the state
-        self._target_normalizer = state["target_normalizer"]
-        self._target_normalizer_fitted = state["target_normalizer_fitted"]
-        self._scalers = state["feature_scalers"]
-        self._feature_scalers_fitted = state["feature_scalers_fitted"]
-        self._build_cont_scalers()
-
     def _compute_data_properties(self, train_indices: torch.Tensor) -> dict:
         """Scan training targets to determine per-target type, positivity, skewness.
 
@@ -1074,10 +940,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         return MultiNormalizer(normalizers) if self.n_targets > 1 else normalizers[0]
 
     def _resolve_target_normalizer(self, train_indices: torch.Tensor) -> None:
-        """Resolve 'auto' target normalizer and wrap in ScalerAdapter.
-
-        No-op if normalizer was explicitly provided.
-        """
+        """Resolve target normalizer"""
         if not self._auto_normalizer:
             return
         data_properties = self._compute_data_properties(train_indices)
