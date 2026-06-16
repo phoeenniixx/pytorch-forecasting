@@ -361,85 +361,102 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         }
         return pd.DataFrame(group_data)
 
-    def _preprocess_data(self, series_idx: torch.Tensor) -> list[dict[str, Any]]:
-        """Preprocess the data before feeding it into _ProcessedEncoderDecoderDataset.
-
-        Preprocessing steps
-        --------------------
-
-        * Converts target (`y`) and features (`x`) to `torch.float32`.
-        * Masks time points that are at or before the cutoff time.
-        * Splits features into categorical and continuous subsets based on
-            predefined indices.
-        * Normalizes the target variable using the specified target normalizer.
-        * Normalizes continuous features using the specified feature scalers.
-        """
-        sample = self.time_series_dataset[series_idx]
-
+    def _coerce_sample(
+        self, sample: dict
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Convert raw sample arrays to float tensors and compute time mask."""
         target = sample["y"]
         features = sample["x"]
         times = sample["t"]
         cutoff_time = sample["cutoff_time"]
 
-        time_mask = torch.tensor(times <= cutoff_time, dtype=torch.bool)
+        target = target.float()
+        features = features.float()
 
-        if isinstance(target, torch.Tensor):
-            target = target.float()
-        else:
-            target = torch.tensor(target, dtype=torch.float32)
-
-        if isinstance(features, torch.Tensor):
-            features = features.float()
-        else:
-            features = torch.tensor(features, dtype=torch.float32)
-
-        # target is always made into 2D tensor before normalizing.
-        # helps in generalizing to all cases - single and multi target.
         if target.ndim == 1:
             target = target.unsqueeze(-1)
 
+        time_mask = torch.tensor(times <= cutoff_time, dtype=torch.bool)
+        return target, features, times, time_mask
+
+    def _split_features(self, features: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Split feature tensor into categorical and continuous subsets."""
+        n_timesteps = features.shape[0]
         categorical = (
             features[:, self.categorical_indices]
             if self.categorical_indices
-            else torch.zeros((features.shape[0], 0))
+            else torch.zeros((n_timesteps, 0))
         )
         continuous = (
             features[:, self.continuous_indices]
             if self.continuous_indices
-            else torch.zeros((features.shape[0], 0))
+            else torch.zeros((n_timesteps, 0))
         )
+        return {"categorical": categorical, "continuous": continuous}
 
+    def _normalize_target(
+        self, target: torch.Tensor, series_idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply global target normalization.
+
+        Returns
+        -------
+        target : normalized tensor
+        target_original : pre-normalization clone (for scale computation)
+        """
         target_original = target.clone()
 
-        if self._target_normalizer is not None and self._target_normalizer_fitted:
-            if not self._target_normalizer.fit_per_sequence:
-                X = self._get_group_dataframe(series_idx, target.shape[0])
-                target = self._target_normalizer.transform(target, X)
+        if self._target_normalizer is None or not self._target_normalizer_fitted:
+            return target, target_original
 
-            for i, is_enc in enumerate(self._target_normalizer.label_encoder_mask):
-                if is_enc:
-                    target_original[:, i] = target[:, i]
+        if not self._target_normalizer.fit_per_sequence:
+            X = self._get_group_dataframe(series_idx, target.shape[0])
+            target = self._target_normalizer.transform(target, X)
 
-        # applying feature scalers.
-        if self._feature_scalers_fitted and self.continuous_indices:
-            normalized_cont = continuous.clone()
-            X = self._get_group_dataframe(series_idx, continuous.shape[0])
-            feature_names = [
-                self.time_series_metadata["cols"]["x"][idx]
-                for idx in self.continuous_indices
-            ]
+        for i, is_enc in enumerate(self._target_normalizer.label_encoder_mask):
+            if is_enc:
+                target_original[:, i] = target[:, i]
 
-            for feat_idx, feat_name in enumerate(feature_names):
-                if feat_name in self._scalers:
-                    adapter = self._scalers[feat_name]
-                    if not adapter.fit_per_sequence:
-                        normalized_cont[:, feat_idx] = adapter.transform(
-                            continuous[:, feat_idx], X
-                        )
-            continuous = normalized_cont
+        return target, target_original
+
+    def _normalize_features(
+        self, continuous: torch.Tensor, series_idx: int
+    ) -> torch.Tensor:
+        """Apply global continuous feature scalers."""
+        if not self._feature_scalers_fitted or not self.continuous_indices:
+            return continuous
+
+        continuous = continuous.clone()
+        X = self._get_group_dataframe(series_idx, continuous.shape[0])
+        feature_names = [
+            self.time_series_metadata["cols"]["x"][idx]
+            for idx in self.continuous_indices
+        ]
+
+        for feat_idx, feat_name in enumerate(feature_names):
+            if feat_name in self._scalers:
+                adapter = self._scalers[feat_name]
+                if not adapter.fit_per_sequence:
+                    continuous[:, feat_idx] = adapter.transform(
+                        continuous[:, feat_idx], X
+                    )
+        return continuous
+
+    def _preprocess_data(self, series_idx: int) -> dict[str, Any]:
+        """Preprocess one series into a cache dict.
+
+        Composes coercion, feature splitting, and global normalization.
+        Sequence-local normalization (EncoderNormalizer) is deferred to
+        __getitem__.
+        """
+        sample = self.time_series_dataset[series_idx]
+        target, features, times, time_mask = self._coerce_sample(sample)
+        split = self._split_features(features)
+        target, target_original = self._normalize_target(target, series_idx)
+        continuous = self._normalize_features(split["continuous"], series_idx)
 
         return {
-            "features": {"categorical": categorical, "continuous": continuous},
+            "features": {"categorical": split["categorical"], "continuous": continuous},
             "target": target,
             "target_original": target_original,
             "static": sample.get("st", None),
@@ -447,7 +464,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             "length": len(target),
             "time_mask": time_mask,
             "times": times,
-            "cutoff_time": cutoff_time,
+            "cutoff_time": sample["cutoff_time"],
         }
 
     def _fit_target_normalizer(self, train_indices):
@@ -521,26 +538,6 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             adapter.fit(feat_data, X)
 
         self._feature_scalers_fitted = True
-
-    def _preprocess_all_data(self, indices: torch.Tensor) -> dict[dict[str, Any]]:
-        """Preprocess all data samples for given indices.
-
-        Parameters
-        ----------
-        indices : torch.Tensor
-            Tensor of indices specifying which samples to preprocess.
-
-        Returns
-        -------
-        dict[int, dict[str, Any]]
-            A dictionary mapping series indices to dictionaries containing preprocessed
-            data for each sample.
-        """
-        preprocessed_data = {}
-        for idx in indices:
-            series_idx = idx.item()
-            preprocessed_data[series_idx] = self._preprocess_data(series_idx)
-        return preprocessed_data
 
     class _ProcessedEncoderDecoderDataset(Dataset):
         """PyTorch Dataset for processed encoder-decoder time series data.
@@ -974,15 +971,18 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         if stage is None or stage == "fit":
             self._resolve_target_normalizer(self._train_indices)
             if not self._target_normalizer_fitted:
-                print(self._target_normalizer_fitted, self._target_normalizer._scaler)
                 self._fit_target_normalizer(self._train_indices)
             if not self._feature_scalers_fitted:
                 self._fit_scalers(self._train_indices)
             if not hasattr(self, "train_dataset") or not hasattr(self, "val_dataset"):
-                self._train_preprocessed = self._preprocess_all_data(
-                    self._train_indices
-                )
-                self._val_preprocessed = self._preprocess_all_data(self._val_indices)
+                self._train_preprocessed = {
+                    idx.item(): self._preprocess_data(idx.item())
+                    for idx in self._train_indices
+                }
+                self._val_preprocessed = {
+                    idx.item(): self._preprocess_data(idx.item())
+                    for idx in self._val_indices
+                }
 
                 self.train_windows = self._create_windows(self._train_indices)
                 self.val_windows = self._create_windows(self._val_indices)
@@ -1002,7 +1002,10 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
 
         elif stage == "test":
             if not hasattr(self, "test_dataset"):
-                self._test_preprocessed = self._preprocess_all_data(self._test_indices)
+                self._test_preprocessed = {
+                    idx.item(): self._preprocess_data(idx.item())
+                    for idx in self._test_indices
+                }
                 self.test_windows = self._create_windows(self._test_indices)
                 self.test_dataset = self._ProcessedEncoderDecoderDataset(
                     self,
@@ -1012,7 +1015,9 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                 )
         elif stage == "predict":
             predict_indices = torch.arange(len(self.time_series_dataset))
-            self._predict_preprocessed = self._preprocess_all_data(predict_indices)
+            self._predict_preprocessed = {
+                idx.item(): self._preprocess_data(idx.item()) for idx in predict_indices
+            }
             self.predict_windows = self._create_windows(predict_indices)
             self.predict_dataset = self._ProcessedEncoderDecoderDataset(
                 self,
