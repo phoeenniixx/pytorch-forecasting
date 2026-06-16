@@ -65,7 +65,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         Whether to add target scaling information.
     add_encoder_length : Union[bool, str], default="auto"
         Whether to include encoder length information.
-    target_normalizer : torch transformer, str, list, tuple, optional, default="auto"
+    target_normalizer : torch transformer, str, list, tuple, optional, default=None
         Transformer that takes group_ids, target and time_idx to normalize targets.
         You can choose from
         :py:class:`~pytorch_forecasting.data.encoders.TorchNormalizer`,
@@ -111,7 +111,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         | str
         | list[NORMALIZER]
         | tuple[NORMALIZER]
-        | None = "auto",
+        | None = None,
         categorical_encoders: dict[str, NaNLabelEncoder] | None = None,
         scalers: dict[
             str, StandardScaler | RobustScaler | TorchNormalizer | EncoderNormalizer
