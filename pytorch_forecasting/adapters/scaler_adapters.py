@@ -1,44 +1,18 @@
-from typing import Union
-
-import numpy as np
 import pandas as pd
-from sklearn.preprocessing import (
-    MaxAbsScaler,
-    MinMaxScaler,
-    RobustScaler,
-    StandardScaler,
-)
 import torch
 
+from pytorch_forecasting.adapters.utils import (
+    ArrayLike,
+    _to_numpy,
+    _to_tensor,
+    is_sklearn_scaler,
+)
 from pytorch_forecasting.data.encoders import (
     EncoderNormalizer,
     GroupNormalizer,
     MultiNormalizer,
     NaNLabelEncoder,
-    TorchNormalizer,
 )
-
-_SKLEARN_SCALERS = (RobustScaler, StandardScaler, MinMaxScaler, MaxAbsScaler)
-
-ArrayLike = torch.Tensor | np.ndarray | pd.Series
-
-
-def _to_numpy(data: ArrayLike) -> np.ndarray:
-    """Convert any array-like to numpy."""
-    if isinstance(data, torch.Tensor):
-        return data.detach().numpy()
-    elif isinstance(data, pd.Series):
-        return data.to_numpy()
-    return np.asarray(data)
-
-
-def _to_tensor(data: ArrayLike, dtype=torch.float32) -> torch.Tensor:
-    """Convert any array-like to a float32 tensor."""
-    if isinstance(data, torch.Tensor):
-        return data.to(dtype)
-    elif isinstance(data, pd.Series):
-        return torch.tensor(data.to_numpy(), dtype=dtype)
-    return torch.tensor(np.asarray(data), dtype=dtype)
 
 
 class ScalerAdapter:
@@ -58,7 +32,6 @@ class ScalerAdapter:
     def __init__(self, scaler):
         self._scaler = scaler
         self.is_multi = isinstance(scaler, MultiNormalizer)
-        self._is_sklearn = isinstance(scaler, _SKLEARN_SCALERS)
 
         if self.is_multi:
             self._sub_adapters = [ScalerAdapter(norm) for norm in scaler.normalizers]
@@ -83,7 +56,7 @@ class ScalerAdapter:
 
     def _prepare_input(self, data: ArrayLike) -> ArrayLike:
         """Coerce data to the type the underlying scaler expects."""
-        if self._is_sklearn:
+        if is_sklearn_scaler(self._scaler):
             return _to_numpy(data).reshape(-1, 1)
 
         if self.is_multi:
@@ -160,7 +133,7 @@ class ScalerAdapter:
             result = _to_tensor(self._scaler.transform(prepared, X))
             return result.unsqueeze(-1) if input_was_2d else result
 
-        if self._is_sklearn:
+        if is_sklearn_scaler(self._scaler):
             original_shape = _to_numpy(data).shape
             result = self._scaler.transform(prepared).reshape(original_shape)
             return torch.tensor(result, dtype=torch.float32)
