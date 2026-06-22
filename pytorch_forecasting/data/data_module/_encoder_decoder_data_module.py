@@ -79,10 +79,21 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
     categorical_encoders : Optional[Dict[str, NaNLabelEncoder]], default=None
         Dictionary of categorical encoders.
 
-    scalers :
-    Optional[Dict[str, Union[RobustScaler, StandardScaler, MinMaxScaler, MaxAbsScaler,
-             GroupNormalizer, TorchNormalizer, EncoderNormalizer]]], default=None
-        Dictionary of feature scalers.
+    scalers : optional, default=None
+        Mapping of continuous feature names to their designated scaling instances.
+
+        Defaults to ``None`` - an Identity pass-through, leaving the raw
+                    feature values untouched.
+        Supported scaler options for individual feature keys include:
+        * **PyTorch Forecasting Normalizers**:
+          * :class:`~pytorch_forecasting.data.encoders.TorchNormalizer`
+          * :class:`~pytorch_forecasting.data.encoders.GroupNormalizer`
+          * :class:`~pytorch_forecasting.data.encoders.EncoderNormalizer`
+        * **Scikit-Learn Scalers**:
+          * ``StandardScaler``
+          * ``RobustScaler``
+          * ``MinMaxScaler``
+          * ``MaxAbsScaler``
 
     randomize_length : Union[None, Tuple[float, float], bool], default=False
         Whether to randomize input sequence length.
