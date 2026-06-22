@@ -31,5 +31,18 @@ def _to_tensor(data: ArrayLike, dtype=torch.float32) -> torch.Tensor:
     return torch.tensor(np.asarray(data), dtype=dtype)
 
 
-def is_sklearn_scaler(scaler):
+def _is_sklearn_scaler(scaler):
     return isinstance(scaler, _SKLEARN_SCALERS)
+
+
+def _series_from(data: ArrayLike) -> pd.Series:
+    """Prep for scalers that want a pd.Series (label encoder, group normalizer)."""
+    if isinstance(data, pd.Series):
+        return data
+    np_data = _to_numpy(data)
+    return pd.Series(np_data.squeeze() if np_data.ndim == 2 else np_data)
+
+
+def _was_2d_singleton(data: ArrayLike) -> bool:
+    """True if `data` is a torch.Tensor of shape (n, 1)."""
+    return isinstance(data, torch.Tensor) and data.ndim == 2 and data.shape[1] == 1

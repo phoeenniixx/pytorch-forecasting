@@ -21,7 +21,6 @@ from torch.utils.data import DataLoader, Dataset
 
 from pytorch_forecasting.adapters import ScalerAdapter
 from pytorch_forecasting.data.encoders import (
-    # todo: need to see and decide how to handle GroupNormalizer
     EncoderNormalizer,
     MultiNormalizer,
     NaNLabelEncoder,

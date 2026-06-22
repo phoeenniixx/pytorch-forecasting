@@ -1,11 +1,18 @@
 import pandas as pd
 import torch
 
+from pytorch_forecasting.adapters._strategy import (
+    _EncoderNormalizerStrategy,
+    _GroupNormalizerStrategy,
+    _LabelEncoderStrategy,
+    _ScalerStrategy,
+    _SklearnStrategy,
+)
 from pytorch_forecasting.adapters.utils import (
     ArrayLike,
+    _is_sklearn_scaler,
     _to_numpy,
     _to_tensor,
-    is_sklearn_scaler,
 )
 from pytorch_forecasting.data.encoders import (
     EncoderNormalizer,
@@ -15,18 +22,62 @@ from pytorch_forecasting.data.encoders import (
 )
 
 
+def get_scaler_strategy(scaler) -> _ScalerStrategy:
+    """Single dispatch point: the only place that inspects scaler type."""
+    if _is_sklearn_scaler(scaler):
+        return _SklearnStrategy()
+    if isinstance(scaler, GroupNormalizer):
+        return _GroupNormalizerStrategy()
+    if isinstance(scaler, NaNLabelEncoder):
+        return _LabelEncoderStrategy()
+    if isinstance(scaler, EncoderNormalizer):
+        return _EncoderNormalizerStrategy()
+    return _ScalerStrategy()
+
+
 class ScalerAdapter:
     """
     Unified array-in / tensor-out interface for single and multi-target scalers.
 
     Accepts torch.Tensor, np.ndarray, or pd.Series as input. Output is always
-    a torch.Tensor. Conversions are performed only when the underlying scaler
-    requires a specific type:
+    a torch.Tensor.  Type-specific behavior (sklearn scalers, GroupNormalizer,
+    NaNLabelEncoder, EncoderNormalizer, ...) is delegated to a strategy chosen
+    once at construction time (see ``adapters/_strategy.py``).
+
 
     Parameters
     ----------
-    scaler : sklearn scaler, TorchNormalizer, EncoderNormalizer, NaNLabelEncoder,
-             or MultiNormalizer
+    scaler : object
+        The underlying scaling/encoding instance. Accepted types, their expected
+            origins, and assumed API contracts are:
+
+            * scikit-learn scalers (from ``sklearn.preprocessing``):
+                Implements ``.fit(X)` and ``.transform(X)``. Expects 2D
+                numpy arrays of shape ``(n_samples, 1)``. Outputs numpy arrays.
+
+            * ``TorchNormalizer``  (from ``pytorch_forecasting.data.encoders``):
+                Implements `.fit(data)` and `.transform(data)`. Expects 1D
+                tensors or numpy arrays. Output can be tensor or array.
+
+            *``EncoderNormalizer`` (from ``pytorch_forecasting.data.encoders``):
+                Implements `.fit(data)` and `.transform(data)`. Expects 1D
+                tensors or numpy arrays. Output can be tensor or array.
+                `EncoderNormalizer` signals that it must be fit per-sequence.
+
+            * ``NaNLabelEncoder`` (from `pytorch_forecasting.data.encoders`):
+                Implements ``.fit(data)`` and ``.transform(data)``. Expects a
+                1D ``pd.Series`` (or 1D array). Used for categorical encoding.
+
+            * ``GroupNormalizer`` (from ``pytorch_forecasting.data.encoders``):
+                Implements ``.fit(data, X)`` and ``.transform(data, X)``. Expects
+                `data` as a 1D ``pd.Series`` and `X` as a ``pd.DataFrame`` containing
+                required group columns to compute grouped statistics.
+
+            * ``MultiNormalizer`` (from ``pytorch_forecasting.data.encoders``):
+                Implements ``.fit(data, X)`` and ``.transform(data.T, X)``.
+                Expects 2D array-like inputs of shape ``(n_samples, n_targets)``.
+                Must expose a ``.normalizers`` attribute (iterable) containing the
+                individual sub-normalizers for each target.
     """
 
     def __init__(self, scaler):
@@ -35,10 +86,17 @@ class ScalerAdapter:
 
         if self.is_multi:
             self._sub_adapters = [ScalerAdapter(norm) for norm in scaler.normalizers]
-
-    @property
-    def is_label_encoder(self) -> bool:
-        return isinstance(self._scaler, NaNLabelEncoder)
+            self._strategy = None
+            self.is_label_encoder = False
+            self.fit_per_sequence = any(a.fit_per_sequence for a in self._sub_adapters)
+        else:
+            self._strategy = get_scaler_strategy(scaler) if scaler is not None else None
+            self.is_label_encoder = (
+                self._strategy.is_label_encoder if self._strategy else False
+            )
+            self.fit_per_sequence = (
+                self._strategy.fit_per_sequence if self._strategy else False
+            )
 
     @property
     def label_encoder_mask(self) -> list[bool]:
@@ -47,30 +105,12 @@ class ScalerAdapter:
             return [sub.is_label_encoder for sub in self._sub_adapters]
         return [self.is_label_encoder]
 
-    @property
-    def fit_per_sequence(self) -> bool:
-        """True if any normalizer must be (re-)fit at __getitem__ time."""
-        if self.is_multi:
-            return any(a.fit_per_sequence for a in self._sub_adapters)
-        return isinstance(self._scaler, EncoderNormalizer)
-
     def _prepare_input(self, data: ArrayLike) -> ArrayLike:
         """Coerce data to the type the underlying scaler expects."""
-        if is_sklearn_scaler(self._scaler):
-            return _to_numpy(data).reshape(-1, 1)
-
         if self.is_multi:
             arr = _to_numpy(data)
             return arr if arr.ndim == 2 else arr[:, None]
-
-        if isinstance(self._scaler, (NaNLabelEncoder, GroupNormalizer)):
-            if isinstance(data, pd.Series):
-                return data
-            np_data = _to_numpy(data)
-            return pd.Series(np_data.squeeze() if np_data.ndim == 2 else np_data)
-
-        t = _to_tensor(data)
-        return t.squeeze(-1) if (t.ndim == 2 and t.shape[1] == 1) else t
+        return self._strategy.prepare_input(data)
 
     def fit(self, data: ArrayLike, X: pd.DataFrame = None) -> "ScalerAdapter":
         """Fit the scaler.
@@ -88,19 +128,11 @@ class ScalerAdapter:
             return self
 
         prepared = self._prepare_input(data)
-        if isinstance(self._scaler, GroupNormalizer):
-            assert X is not None, (
-                "GroupNormalizer requires X (DataFrame with group columns) "
-                "to be passed to fit()."
-            )
-            self._scaler.fit(prepared, X)
-            return self
-
         if self.is_multi:
             self._scaler.fit(prepared, X)
             return self
 
-        self._scaler.fit(prepared)
+        self._strategy.fit(self._scaler, prepared, X)
         return self
 
     def transform(self, data: ArrayLike, X: pd.DataFrame = None) -> torch.Tensor:
@@ -122,32 +154,13 @@ class ScalerAdapter:
         """
         if self._scaler is None:
             return _to_tensor(data)
-        input_was_2d = isinstance(data, torch.Tensor) and data.ndim == 2
         prepared = self._prepare_input(data)
-
-        if isinstance(self._scaler, GroupNormalizer):
-            assert X is not None, (
-                "GroupNormalizer requires X (DataFrame with group columns) "
-                "to be passed to transform()."
-            )
-            result = _to_tensor(self._scaler.transform(prepared, X))
-            return result.unsqueeze(-1) if input_was_2d else result
-
-        if is_sklearn_scaler(self._scaler):
-            original_shape = _to_numpy(data).shape
-            result = self._scaler.transform(prepared).reshape(original_shape)
-            return torch.tensor(result, dtype=torch.float32)
 
         if self.is_multi:
             results = self._scaler.transform(prepared.T, X)
             return torch.stack([_to_tensor(r) for r in results], dim=-1)
 
-        squeezed = (
-            isinstance(data, torch.Tensor) and data.ndim == 2 and data.shape[1] == 1
-        )
-        result = self._scaler.transform(prepared)
-        result = _to_tensor(result)
-        return result.unsqueeze(-1) if squeezed else result
+        return self._strategy.transform(self._scaler, prepared, data, X)
 
     def fit_transform(self, data: ArrayLike, X: pd.DataFrame = None) -> torch.Tensor:
         return self.fit(data, X).transform(data, X)
