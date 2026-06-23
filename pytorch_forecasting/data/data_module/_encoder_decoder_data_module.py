@@ -7,6 +7,7 @@
 # into the memory.
 #######################################################################################
 
+from pathlib import Path
 from typing import Any, Optional, Union
 from warnings import warn
 
@@ -567,6 +568,66 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
                 y = y.squeeze(-1)
 
             return x, y
+
+    def save_artifacts(
+        self, artifact_dir: Path, include: list[str] = [], exclude: list[str] = []
+    ):
+        """Save data module artifacts.
+
+        Parameters
+        ----------
+        artifact_dir : Path
+            Path to save artifacts.
+        exclude : list[str], default=None
+            The list of artifacts that need to be excluded from saving.
+
+        Saves
+        -----
+        scalers, target_normalizers, and datamodule's metadata.
+
+        Returns
+        -------
+        dict
+            A dictionary containing artifacts with keys as the "type" of artifact
+            while the values are the paths where they are saved.
+
+        Raises
+        ------
+        UserWarning
+            If some artifact that is to be stored but the datamodule doesnt have them.
+            Eg if the scalers were to be stored but they were not initialized so they
+            are not present in data module's memory.
+        """
+        pass
+
+    def load_artifacts(self, artifacts: dict[str, Any]):
+        """Save data module artifacts.
+
+        Parameters
+        ----------
+        artifacts : dict
+            Path to save artifacts.
+        exclude : list[str], default=None
+            The list of artifacts that need to be excluded from saving.
+
+        Saves
+        -----
+        scalers, target_normalizers, and datamodule's metadata.
+
+        Returns
+        -------
+        dict
+            A dictionary containing artifacts with keys as the "type" of artifact
+            while the values are the paths where they are saved.
+
+        Raises
+        ------
+        UserWarning
+            If some artifact that is to be stored but the datamodule doesn't have them.
+            Eg if the scalers were to be stored, but they were not initialized so they
+            are not present in data module's memory.
+        """
+        pass
 
     def _create_windows(self, indices: torch.Tensor) -> list[tuple[int, int, int, int]]:
         """Generate sliding windows for training, validation, and testing.
