@@ -198,7 +198,7 @@ class Base_pkg(_BasePtForecasterV2):
         self,
         ckpt_dir: Path,
         model_ckpt_kwargs: dict[str, Any] | None = None,
-        exclude: list[str] | None = None,
+        exclude: list[str] = [],
     ) -> tuple[Path, list[Callback]]:
         """Private. Only called from fit().
 
@@ -208,11 +208,32 @@ class Base_pkg(_BasePtForecasterV2):
         ArtifactRegistryCallback pair that will write the model-checkpoint keys
         later, during trainer.fit().
 
+        Save contract
+        ------------------
+        - Saving is never a single synchronous event. Eager artifacts (cfgs, scalers,
+          target_normalizer, datamodule metadata) are written immediately, before a
+          Trainer exists. Model weights are written later, on Lightning's own
+          schedule, via ModelCheckpoint + ArtifactRegistryCallback.
+        - `_save()` is private. It is only ever called from `fit()`, which is the
+          only context where "save" has an unambiguous meaning (we're either about
+          to train, or training already happened in this same call). There is no
+          public standalone save.
+        - `best_model_checkpoint` / `last_model_checkpoint` keys in artifacts.yaml
+          are owned exclusively by ArtifactRegistryCallback. Nothing else writes them.
+
+        Parameters
+        ----------
+        ckpt_dir : Path
+            directory where the chekcpoints are saved
+        model_ckpt_kwargs : dict[str, Any] | None, defualt = None
+            kwargs for ModelCheckpoint
+        exclude : list[str], defualt = None
+            the artifacts we want to exclude while saving
+
         Returns
         -------
-        ckpt_dir : Path
-        model_ckpt_kwargs: dict[str, Any], default None
-            kwargs for ModelCheckpoint
+        registry_path : Path
+            path of the artifacts.yaml
         callbacks : list[Callback]
             Empty if "model_checkpoint" in exclude.
         """
@@ -263,6 +284,38 @@ class Base_pkg(_BasePtForecasterV2):
     ) -> None:
         """Public, single entry point for loading. Reads artifacts.yaml and
         delegates each artifact to whichever layer owns it.
+
+        Load contract
+        ------------------
+        - Loading is a single synchronous event, unlike saving.
+        - `load()` is the only entry point, and it is public.
+        - `load()` reads artifacts.yaml once and delegates each key to whichever layer
+          owns it: cfgs are loaded directly by `pkg` (same layer that wrote them);
+          scalers / target_normalizer / datamodule_metadata are handed to
+          `datamodule.load_artifacts()`; `best_model_checkpoint` is handed to the
+          model class's `load_from_checkpoint()`. `pkg` never deserializes an artifact
+          it doesn't itself own.
+        - Ordering is load-bearing: datamodule metadata must be loaded and the
+          datamodule reconstructed *before* `_build_model()` runs, since model
+          construction takes metadata as an argument. `load()` is responsible for
+          this ordering -- the owning layers are not responsible for sequencing
+          themselves correctly relative to each other.
+        - `skip` lets the user exclude specific keys from artifacts.yaml at load time,
+          independent of whatever `exclude` was passed at save time -- these are two
+          separate controls over two separate moments, not the same flag reused.
+        - A key missing from artifacts.yaml (because it was excluded at save time, or
+          never existed -- e.g. no scalers were ever configured) is not an error.
+          `load()` only acts on keys that are present; it never raises just because an
+          optional artifact wasn't there to begin with.
+        - `load()` never writes to artifacts.yaml. It only reads. All registry writes
+          belong to `_save()` and `ArtifactRegistryCallback`, on the saving side.
+
+        Parameters
+        ----------
+        ckpt_dir : Path
+            the directory we need to load from
+        skip: list[str], defualt = []
+            list of artifacts we dont want to load
         """
         # ckpt_dir = Path(ckpt_dir)
         # registry_path = ckpt_dir / "artifacts.yaml"
