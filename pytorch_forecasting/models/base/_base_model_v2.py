@@ -160,18 +160,63 @@ class BaseModel(LightningModule):
 
         return predict_callback.result
 
-    def to_prediction(self, out: dict[str, Any], **kwargs) -> torch.Tensor:
-        """Converts raw model output to point forecasts."""
-        # todo: add MultiLoss support
+    def to_prediction(
+        self, out: dict[str, Any], use_metric: bool = True, **kwargs
+    ) -> list[torch.Tensor] | torch.Tensor:
+        """Converts raw model output to point forecasts.
+
+        Parameters
+        ----------
+        out : dict
+            Network output dict with key ``"prediction"``.
+        use_metric : bool
+            If True, use loss metric for conversion.
+            If False, take mean over prediction directly.
+        """
+        if not use_metric:
+            if isinstance(self.loss, MultiLoss):
+                return [
+                    Metric.to_prediction(loss, out["prediction"][idx])
+                    for idx, loss in enumerate(self.loss)
+                ]
+            else:
+                return Metric.to_prediction(self.loss, out["prediction"])
         try:
             out = self.loss.to_prediction(out["prediction"], **kwargs)
         except TypeError:  # in case passed kwargs do not exist
             out = self.loss.to_prediction(out["prediction"])
         return out
 
-    def to_quantiles(self, out: dict[str, Any], **kwargs) -> torch.Tensor:
-        """Converts raw model output to quantile forecasts."""
-        # todo: add MultiLoss support
+    def to_quantiles(
+        self, out: dict[str, Any], use_metric: bool = True, **kwargs
+    ) -> list[torch.Tensor] | torch.Tensor:
+        """Converts raw model output to quantile forecasts.
+
+        Parameters
+        ----------
+        out : dict
+            Network output dict.
+        use_metric : bool
+            If True, use loss metric for conversion.
+            If False, take mean over prediction directly.
+        """
+
+        if not use_metric:
+            if isinstance(self.loss, MultiLoss):
+                return [
+                    Metric.to_quantiles(
+                        loss,
+                        out["prediction"][idx],
+                        quantiles=kwargs.get("quantiles", loss.quantiles),
+                    )
+                    for idx, loss in enumerate(self.loss)
+                ]
+            else:
+                return Metric.to_quantiles(
+                    self.loss,
+                    out["prediction"],
+                    quantiles=kwargs.get("quantiles", self.loss.quantiles),
+                )
         try:
             out = self.loss.to_quantiles(out["prediction"], **kwargs)
         except TypeError:  # in case passed kwargs do not exist
@@ -379,13 +424,23 @@ class BaseModel(LightningModule):
         prefix : str
             Prefix for the logged metrics (e.g., "train", "val", "test").
         """
+        if not self.logging_metrics:
+            return
+
+        target, weight = y
+        is_multi = isinstance(target, list)
+        y_hat_list = y_hat if is_multi else [y_hat]
+        target_list = target if is_multi else [target]
+
         for metric in self.logging_metrics:
-            metric_value = metric(y_hat, y)
-            self.log(
-                f"{prefix}_{metric.__class__.__name__}",
-                metric_value,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-            )
+            for idx, (yh, yt) in enumerate(zip(y_hat_list, target_list)):
+                metric_value = metric(yh, (yt, weight))
+                tag = f"target{idx}_" if is_multi else ""
+                self.log(
+                    f"{tag}{prefix}_{metric.__class__.__name__}",
+                    metric_value,
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=True,
+                    logger=True,
+                )
