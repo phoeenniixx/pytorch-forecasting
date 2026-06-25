@@ -1,20 +1,33 @@
+from abc import abstractmethod
+
 import pandas as pd
 import torch
 
+from pytorch_forecasting import EncoderNormalizer, GroupNormalizer, NaNLabelEncoder
 from pytorch_forecasting.adapters.utils import (
     ArrayLike,
+    _is_sklearn_scaler,
     _series_from,
     _to_numpy,
     _to_tensor,
     _was_2d_singleton,
 )
+from pytorch_forecasting.base._base_object import _BaseObject
 
 
-class _ScalerStrategy:
+class ScalerStrategy(_BaseObject):
     """Default behavior for scalers."""
 
-    is_label_encoder = False
-    fit_per_sequence = False
+    _tags = {
+        "object_type": "scaler_strategy",
+        "fit_per_sequence": False,
+        "is_label_encoder": False,
+    }
+
+    @staticmethod
+    @abstractmethod
+    def _is_applicable(scaler) -> bool:
+        """Whether the scaler follows the given strategy."""
 
     def prepare_input(self, data: ArrayLike) -> ArrayLike:
         t = _to_tensor(data)
@@ -30,14 +43,24 @@ class _ScalerStrategy:
         return result.unsqueeze(-1) if _was_2d_singleton(data) else result
 
 
-class _EncoderNormalizerStrategy(_ScalerStrategy):
+class EncoderNormalizerStrategy(ScalerStrategy):
     """EncoderNormalizer must be re-fit per encoder window."""
 
-    fit_per_sequence = True
+    _tags = {
+        "fit_per_sequence": True,
+    }
+
+    @staticmethod
+    def _is_applicable(scaler) -> bool:
+        return isinstance(scaler, EncoderNormalizer)
 
 
-class _SklearnStrategy(_ScalerStrategy):
+class SklearnStrategy(ScalerStrategy):
     """sklearn scalers expect/return 2D numpy arrays."""
+
+    @staticmethod
+    def _is_applicable(scaler) -> bool:
+        return _is_sklearn_scaler(scaler)
 
     def prepare_input(self, data: ArrayLike) -> ArrayLike:
         return _to_numpy(data).reshape(-1, 1)
@@ -53,8 +76,14 @@ class _SklearnStrategy(_ScalerStrategy):
         return torch.tensor(result, dtype=torch.float32)
 
 
-class _LabelEncoderStrategy(_ScalerStrategy):
-    is_label_encoder = True
+class LabelEncoderStrategy(ScalerStrategy):
+    _tags = {
+        "is_label_encoder": True,
+    }
+
+    @staticmethod
+    def _is_applicable(scaler) -> bool:
+        return isinstance(scaler, NaNLabelEncoder)
 
     def prepare_input(self, data: ArrayLike) -> ArrayLike:
         return _series_from(data)
@@ -66,8 +95,10 @@ class _LabelEncoderStrategy(_ScalerStrategy):
         return result.unsqueeze(-1) if _was_2d_singleton(data) else result
 
 
-class _GroupNormalizerStrategy(_ScalerStrategy):
-    requires_group_columns = True
+class GroupNormalizerStrategy(ScalerStrategy):
+    @staticmethod
+    def _is_applicable(scaler) -> bool:
+        return isinstance(scaler, GroupNormalizer)
 
     def prepare_input(self, data: ArrayLike) -> ArrayLike:
         return _series_from(data)

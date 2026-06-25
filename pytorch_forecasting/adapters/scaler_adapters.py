@@ -1,38 +1,30 @@
 import pandas as pd
 import torch
 
-from pytorch_forecasting.adapters._strategy import (
-    _EncoderNormalizerStrategy,
-    _GroupNormalizerStrategy,
-    _LabelEncoderStrategy,
-    _ScalerStrategy,
-    _SklearnStrategy,
+from pytorch_forecasting._registry import all_objects
+from pytorch_forecasting.adapters.scaler_strategy import (
+    ScalerStrategy,
 )
 from pytorch_forecasting.adapters.utils import (
     ArrayLike,
-    _is_sklearn_scaler,
     _to_numpy,
     _to_tensor,
 )
 from pytorch_forecasting.data.encoders import (
-    EncoderNormalizer,
-    GroupNormalizer,
     MultiNormalizer,
-    NaNLabelEncoder,
 )
 
 
-def get_scaler_strategy(scaler) -> _ScalerStrategy:
+def get_scaler_strategy(scaler) -> ScalerStrategy:
     """Single dispatch point: the only place that inspects scaler type."""
-    if _is_sklearn_scaler(scaler):
-        return _SklearnStrategy()
-    if isinstance(scaler, GroupNormalizer):
-        return _GroupNormalizerStrategy()
-    if isinstance(scaler, NaNLabelEncoder):
-        return _LabelEncoderStrategy()
-    if isinstance(scaler, EncoderNormalizer):
-        return _EncoderNormalizerStrategy()
-    return _ScalerStrategy()
+    discovered = all_objects(
+        object_types="scaler_strategy",
+        return_names=False,
+    )
+    for strategy_cls in discovered:
+        if strategy_cls._is_applicable(scaler):
+            return strategy_cls()
+    return ScalerStrategy()
 
 
 class ScalerAdapter:
@@ -42,7 +34,7 @@ class ScalerAdapter:
     Accepts torch.Tensor, np.ndarray, or pd.Series as input. Output is always
     a torch.Tensor.  Type-specific behavior (sklearn scalers, GroupNormalizer,
     NaNLabelEncoder, EncoderNormalizer, ...) is delegated to a strategy chosen
-    once at construction time (see ``adapters/_strategy.py``).
+    once at construction time (see ``adapters/scaler_strategy.py``).
 
 
     Parameters
@@ -92,10 +84,14 @@ class ScalerAdapter:
         else:
             self._strategy = get_scaler_strategy(scaler) if scaler is not None else None
             self.is_label_encoder = (
-                self._strategy.is_label_encoder if self._strategy else False
+                self._strategy.get_tag("is_label_encoder", None)
+                if self._strategy
+                else False
             )
             self.fit_per_sequence = (
-                self._strategy.fit_per_sequence if self._strategy else False
+                self._strategy.get_tag("fit_per_sequence", None)
+                if self._strategy
+                else False
             )
 
     @property

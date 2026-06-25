@@ -85,11 +85,15 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         Defaults to ``None`` - an Identity pass-through, leaving the raw
                     feature values untouched.
         Supported scaler options for individual feature keys include:
+
         * **PyTorch Forecasting Normalizers**:
-          * :class:`~pytorch_forecasting.data.encoders.TorchNormalizer`
-          * :class:`~pytorch_forecasting.data.encoders.GroupNormalizer`
-          * :class:`~pytorch_forecasting.data.encoders.EncoderNormalizer`
+
+          * :py:class:`~pytorch_forecasting.data.encoders.TorchNormalizer`
+          * :py:class:`~pytorch_forecasting.data.encoders.GroupNormalizer`
+          * :py:class:`~pytorch_forecasting.data.encoders.EncoderNormalizer`
+
         * **Scikit-Learn Scalers**:
+
           * ``StandardScaler``
           * ``RobustScaler``
           * ``MinMaxScaler``
