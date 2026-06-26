@@ -958,18 +958,11 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         normalizer = self._get_auto_normalizer(data_properties)
         self._target_normalizer = ScalerAdapter(normalizer)
 
-    def setup(self, stage: str | None = None):
-        """Prepare the datasets for training, validation, testing, or prediction.
+    def _ensure_split(self):
+        """Compute train/val/test indices once and cache them."""
+        if hasattr(self, "_split_indices"):
+            return
 
-        Parameters
-        ----------
-        stage : Optional[str], default=None
-            Specifies the stage of setup. Can be one of:
-            - ``"fit"`` : Prepares training and validation datasets.
-            - ``"test"`` : Prepares the test dataset.
-            - ``"predict"`` : Prepares the dataset for inference.
-            - ``None`` : Prepares ``fit`` datasets.
-        """
         total_series = len(self.time_series_dataset)
         self._split_indices = torch.randperm(total_series)
 
@@ -982,6 +975,41 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         ]
         self._test_indices = self._split_indices[self._train_size + self._val_size :]
 
+    def _make_dataset(self, indices: torch.Tensor):
+        """Preprocess a set of series indices into a windowed Dataset.
+
+        Returns
+        -------
+        preprocessed : dict
+            preprocessed dictionary of series indices.
+        windows : list
+            list of (series_idx, start_idx, enc_length, pred_length)
+        dataset : Dataset
+            dataset wrapping the windows over the preprocessed cache
+        """
+        preprocessed = {
+            idx.item(): self._preprocess_data(idx.item()) for idx in indices
+        }
+        windows = self._create_windows(indices)
+        dataset = self._ProcessedEncoderDecoderDataset(
+            self, windows, preprocessed, self.add_relative_time_idx
+        )
+        return preprocessed, windows, dataset
+
+    def setup(self, stage: str | None = None):
+        """Prepare the datasets for training, validation, testing, or prediction.
+
+        Parameters
+        ----------
+        stage : Optional[str], default=None
+            Specifies the stage of setup. Can be one of:
+            - ``"fit"`` : Prepares training and validation datasets.
+            - ``"test"`` : Prepares the test dataset.
+            - ``"predict"`` : Prepares the dataset for inference.
+            - ``None`` : Prepares ``fit`` datasets.
+        """
+        self._ensure_split()
+
         if stage is None or stage == "fit":
             self._resolve_target_normalizer(self._train_indices)
             if not self._target_normalizer_fitted:
@@ -989,55 +1017,22 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
             if not self._feature_scalers_fitted:
                 self._fit_scalers(self._train_indices)
             if not hasattr(self, "train_dataset") or not hasattr(self, "val_dataset"):
-                self._train_preprocessed = {
-                    idx.item(): self._preprocess_data(idx.item())
-                    for idx in self._train_indices
-                }
-                self._val_preprocessed = {
-                    idx.item(): self._preprocess_data(idx.item())
-                    for idx in self._val_indices
-                }
-
-                self.train_windows = self._create_windows(self._train_indices)
-                self.val_windows = self._create_windows(self._val_indices)
-
-                self.train_dataset = self._ProcessedEncoderDecoderDataset(
-                    self,
-                    self.train_windows,
-                    self._train_preprocessed,
-                    self.add_relative_time_idx,
+                self._train_preprocessed, self.train_windows, self.train_dataset = (
+                    self._make_dataset(self._train_indices)
                 )
-                self.val_dataset = self._ProcessedEncoderDecoderDataset(
-                    self,
-                    self.val_windows,
-                    self._val_preprocessed,
-                    self.add_relative_time_idx,
+                self._val_preprocessed, self.val_windows, self.val_dataset = (
+                    self._make_dataset(self._val_indices)
                 )
 
         elif stage == "test":
             if not hasattr(self, "test_dataset"):
-                self._test_preprocessed = {
-                    idx.item(): self._preprocess_data(idx.item())
-                    for idx in self._test_indices
-                }
-                self.test_windows = self._create_windows(self._test_indices)
-                self.test_dataset = self._ProcessedEncoderDecoderDataset(
-                    self,
-                    self.test_windows,
-                    self._test_preprocessed,
-                    self.add_relative_time_idx,
+                self._test_preprocessed, self.test_windows, self.test_dataset = (
+                    self._make_dataset(self._test_indices)
                 )
         elif stage == "predict":
             predict_indices = torch.arange(len(self.time_series_dataset))
-            self._predict_preprocessed = {
-                idx.item(): self._preprocess_data(idx.item()) for idx in predict_indices
-            }
-            self.predict_windows = self._create_windows(predict_indices)
-            self.predict_dataset = self._ProcessedEncoderDecoderDataset(
-                self,
-                self.predict_windows,
-                self._predict_preprocessed,
-                self.add_relative_time_idx,
+            self._predict_preprocessed, self.predict_windows, self.predict_dataset = (
+                self._make_dataset(predict_indices)
             )
 
     def train_dataloader(self):
