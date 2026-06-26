@@ -1,14 +1,7 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import (
-    MaxAbsScaler,
-    MinMaxScaler,
-    RobustScaler,
-    StandardScaler,
-)
+from sklearn.base import OneToOneFeatureMixin
 import torch
-
-_SKLEARN_SCALERS = (RobustScaler, StandardScaler, MinMaxScaler, MaxAbsScaler)
 
 ArrayLike = torch.Tensor | np.ndarray | pd.Series
 
@@ -32,7 +25,7 @@ def _to_tensor(data: ArrayLike, dtype=torch.float32) -> torch.Tensor:
 
 
 def _is_sklearn_scaler(scaler):
-    return isinstance(scaler, _SKLEARN_SCALERS)
+    return isinstance(scaler, OneToOneFeatureMixin)
 
 
 def _series_from(data: ArrayLike) -> pd.Series:
