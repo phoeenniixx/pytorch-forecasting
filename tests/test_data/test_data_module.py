@@ -494,6 +494,9 @@ def test_multivariate_target(normalizer_list):
     assert y[0].shape == (dm.max_prediction_length,)
     assert y[1].shape == (dm.max_prediction_length,)
     assert x["target_past"].shape == (dm.max_encoder_length, 2)
+    if normalizer_list is None:
+        dm._target_normalizer = None
+        dm._target_normalizer_fitted = False
 
 
 @pytest.mark.parametrize(
@@ -618,11 +621,15 @@ def test_target_normalizers(sample_timeseries_data, normalizer):
         assert (
             dm_with_norm._target_normalizer_fitted
         ), "Target normalizer should be fitted"
+    if normalizer is None:
+        dm_with_norm._target_normalizer = None
+        dm_with_norm._target_normalizer_fitted = False
 
 
 @pytest.mark.parametrize(
     "scaler_type",
     [
+        None,
         TorchNormalizer(),
         StandardScaler(),
         RobustScaler(),
@@ -672,6 +679,9 @@ def test_feature_scaling(sample_timeseries_data, scaler_type):
 
     assert x_with_scale["encoder_cont"].shape == x_no_scale["encoder_cont"].shape
     assert x_with_scale["decoder_cont"].shape == x_no_scale["decoder_cont"].shape
+    if scaler_type is None:
+        dm_with_scale._scalers = None
+        dm_with_scale._feature_scalers_fitted = False
 
 
 def test_group_normalizer_uses_groups():
