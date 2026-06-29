@@ -448,6 +448,7 @@ def test_different_train_val_test_split(sample_timeseries_data):
 @pytest.mark.parametrize(
     "normalizer_list",
     [
+        None,
         [TorchNormalizer(), EncoderNormalizer()],
         [EncoderNormalizer(), GroupNormalizer()],
         [GroupNormalizer(), NaNLabelEncoder(add_nan=True)],
@@ -498,6 +499,7 @@ def test_multivariate_target(normalizer_list):
 @pytest.mark.parametrize(
     "normalizer_list",
     [
+        None,
         [TorchNormalizer(), EncoderNormalizer()],
         [EncoderNormalizer(), GroupNormalizer()],
         [GroupNormalizer(), NaNLabelEncoder(add_nan=True)],
