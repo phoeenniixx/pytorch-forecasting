@@ -6,7 +6,7 @@ import torch
 from pytorch_forecasting import EncoderNormalizer, GroupNormalizer, NaNLabelEncoder
 from pytorch_forecasting.adapters.utils import (
     ArrayLike,
-    _is_sklearn_scaler,
+    _is_sklearn_transformer,
     _series_from,
     _to_numpy,
     _to_tensor,
@@ -60,7 +60,7 @@ class SklearnStrategy(ScalerStrategy):
 
     @staticmethod
     def _is_applicable(scaler) -> bool:
-        return _is_sklearn_scaler(scaler)
+        return _is_sklearn_transformer(scaler)
 
     def prepare_input(self, data: ArrayLike) -> ArrayLike:
         return _to_numpy(data).reshape(-1, 1)

@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
-from sklearn.base import OneToOneFeatureMixin
+from sklearn.base import TransformerMixin
 import torch
+
+from pytorch_forecasting.data.encoders import TransformMixIn
 
 ArrayLike = torch.Tensor | np.ndarray | pd.Series
 
@@ -24,8 +26,11 @@ def _to_tensor(data: ArrayLike, dtype=torch.float32) -> torch.Tensor:
     return torch.tensor(np.asarray(data), dtype=dtype)
 
 
-def _is_sklearn_scaler(scaler):
-    return isinstance(scaler, OneToOneFeatureMixin)
+def _is_sklearn_transformer(scaler):
+    is_sklearn_transform = isinstance(scaler, TransformerMixin)
+    is_ptf_transform = isinstance(scaler, TransformMixIn)
+
+    return is_sklearn_transform and not is_ptf_transform
 
 
 def _series_from(data: ArrayLike) -> pd.Series:
