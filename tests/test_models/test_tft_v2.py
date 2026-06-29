@@ -368,7 +368,6 @@ def test_model_with_datamodule_integration(
 
     actual_batch_size = batch_x["encoder_cont"].shape[0]
     batch_x = {k: v.to(device) for k, v in batch_x.items()}
-    batch_y = batch_y.to(device)
 
     assert batch_x["encoder_cont"].shape[2] == model_metadata_from_dm["encoder_cont"]
     assert batch_x["encoder_cat"].shape[2] == model_metadata_from_dm["encoder_cat"]
@@ -391,7 +390,7 @@ def test_model_with_datamodule_integration(
         model_metadata_from_dm["target"],
     )
     assert not torch.isnan(predictions).any()
-    assert batch_y.shape == (
+    assert batch_y[0].shape == (
         actual_batch_size,
         MAX_PREDICTION_LENGTH_TEST,
     )
