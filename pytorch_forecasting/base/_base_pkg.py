@@ -373,12 +373,7 @@ class Base_pkg(_BasePtForecasterV2):
         self._load_model_from_artifacts(artifacts)
 
     def _load_cfgs_from_artifacts(self, artifacts: dict[str, Any]) -> None:
-        """Load configuration dictionaries from artifacts.
-
-        Only loads keys that are present in ``artifacts``; missing keys
-        (e.g., excluded at save time) are left as the empty defaults
-        set by ``_init_empty_state``.
-        """
+        """Load configuration dictionaries from artifacts."""
         for name in self._CFG_KEYS:
             path = artifacts.get(name)
             if path is None:
