@@ -1,6 +1,7 @@
 from pathlib import Path
 import pickle
 from typing import Any, Optional, Union
+import warnings
 
 from lightning import Trainer
 from lightning.pytorch.callbacks import Callback, ModelCheckpoint
@@ -9,7 +10,10 @@ import torch
 from torch.utils.data import DataLoader
 import yaml
 
-from pytorch_forecasting.callbacks.artifact_registry import ArtifactRegistryCallback
+from pytorch_forecasting.callbacks.artifact_registry import (
+    ArtifactRegistryCallback,
+    _ArtifactRegistry,
+)
 from pytorch_forecasting.data import TimeSeries
 from pytorch_forecasting.models.base._base_object import _BasePtForecasterV2
 
@@ -41,6 +45,9 @@ class Base_pkg(_BasePtForecasterV2):
         is ignored. Defaults to None.
     """
 
+    _CFG_KEYS = ("model_cfg", "datamodule_cfg", "trainer_cfg")
+    _DATAMODULE_KEYS = ("scalers", "target_normalizer", "datamodule_metadata")
+
     def __init__(
         self,
         model_cfg: dict[str, Any] | str | Path | None = None,
@@ -49,27 +56,22 @@ class Base_pkg(_BasePtForecasterV2):
         ckpt_path: str | Path | None = None,
     ):
         self.ckpt_path = Path(ckpt_path) if ckpt_path else None
-        self.model_cfg = self._load_config(
-            model_cfg, ckpt_path=self.ckpt_path, auto_file_name="model_cfg.pkl"
-        )
-
-        self.datamodule_cfg = self._load_config(
-            datamodule_cfg,
-            ckpt_path=self.ckpt_path,
-            auto_file_name="datamodule_cfg.pkl",
-        )
+        self.model_cfg = self._load_config(model_cfg)
+        self.datamodule_cfg = self._load_config(datamodule_cfg)
         self.trainer_cfg = self._load_config(trainer_cfg)
-        self.metadata = self._load_config(
-            None, ckpt_path=self.ckpt_path, auto_file_name="metadata.pkl"
-        )
 
+        if not self.model_cfg and not self.datamodule_cfg and not self.trainer_cfg:
+            warnings.warn(
+                "No configs or `ckpt_path` were provided -- this pkg has "
+                "nothing to build from yet. If you're trying to restore a "
+                "previously saved pkg, use `Base_pkg.load(ckpt_dir)` "
+                "instead of the constructor."
+            )
+
+        self.metadata = {}
         self.model = None
         self.trainer = None
         self.datamodule = None
-        if self.ckpt_path:
-            self._build_model(metadata=self.metadata, **self.model_cfg)
-        else:
-            self.model = None
 
     @staticmethod
     def _load_config(
@@ -80,15 +82,8 @@ class Base_pkg(_BasePtForecasterV2):
         """
         Loads configuration from a dictionary, YAML file, or Pickle file.
         """
-        # TODO: make changes here as well after writing load
         if config is None:
-            if ckpt_path and auto_file_name:
-                path = Path(ckpt_path).parent / auto_file_name
-                if path.exists():
-                    with open(path, "rb") as f:
-                        return pickle.load(f)  # noqa : S301
             return {}
-
         if isinstance(config, dict):
             return config
 
@@ -140,18 +135,19 @@ class Base_pkg(_BasePtForecasterV2):
             "predict": datasets_info["validation_dataset"],
         }
 
-    def _build_model(self, metadata: dict, **kwargs):
-        """Instantiates the model, either from a checkpoint or from config."""
-        # TODO: remove this once save and load is clearly defined.
+    def _init_model_from_cfg(self, metadata: dict):
+        """Construct a fresh model from ``self.model_cfg``."""
+        if not self.model_cfg:
+            raise RuntimeError("`model_cfg` must be provided to train from scratch.")
         model_cls = self.get_cls()
-        if self.ckpt_path:
-            self.model = model_cls.load_from_checkpoint(
-                self.ckpt_path, metadata=metadata, **kwargs
-            )
-        elif self.model_cfg:
-            self.model = model_cls(**self.model_cfg, metadata=metadata)
-        else:
-            self.model = None
+        return model_cls(**self.model_cfg, metadata=metadata)
+
+    def _load_model_from_checkpoint(self, ckpt_path: str | Path, metadata: dict):
+        """Deserialize model weights from a checkpoint."""
+        model_cls = self.get_cls()
+        return model_cls.load_from_checkpoint(
+            ckpt_path, metadata=metadata, **self.model_cfg
+        )
 
     def _build_datamodule(self, data: TimeSeries) -> LightningDataModule:
         """Constructs a DataModule from a D1 layer object."""
@@ -179,26 +175,12 @@ class Base_pkg(_BasePtForecasterV2):
                 "Expected TimeSeriesDataSet, LightningDataModule, or DataLoader."
             )
 
-    def _save_artifact(self, output_dir: Path):
-        """Save all configuration artifacts."""
-        # TODO: to be superseded by _save()
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(output_dir / "datamodule_cfg.pkl", "wb") as f:
-            pickle.dump(self.datamodule_cfg, f)
-
-        with open(output_dir / "model_cfg.pkl", "wb") as f:
-            pickle.dump(self.model_cfg, f)
-
-        if self.datamodule is not None and hasattr(self.datamodule, "metadata"):
-            with open(output_dir / "metadata.pkl", "wb") as f:
-                pickle.dump(self.datamodule.metadata, f)
-
     def _save(
         self,
         ckpt_dir: Path,
         model_ckpt_kwargs: dict[str, Any] | None = None,
-        exclude: list[str] = [],
+        exclude: list[str] | None = None,
+        overwrite: bool = False,
     ) -> tuple[Path, list[Callback]]:
         """Private. Only called from fit().
 
@@ -229,6 +211,8 @@ class Base_pkg(_BasePtForecasterV2):
             kwargs for ModelCheckpoint
         exclude : list[str], defualt = None
             the artifacts we want to exclude while saving
+        overwrite : bool, default=False
+            Whether to overwrite the `ckpt_dir` (if present) or not.
 
         Returns
         -------
@@ -238,30 +222,51 @@ class Base_pkg(_BasePtForecasterV2):
             Empty if "model_checkpoint" in exclude.
         """
         exclude = exclude or []
-        ckpt_dir = Path(model_ckpt_kwargs)
-        # configs_dir = ckpt_dir / "configs"
-        # TODO: configs_dir.mkdir(parents=True, exist_ok=True)
-        # TODO: warn if ckpt_dir already has content
+        ckpt_dir = Path(ckpt_dir)
+        if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
+            if not overwrite:
+                raise FileExistsError(
+                    f"{ckpt_dir} is not empty. Pass `overwrite=True` to "
+                    "`fit()` to replace its contents, or delete the directory "
+                    "if it is no longer needed."
+                )
+            warnings.warn(
+                f"Overwriting existing {ckpt_dir}. Any files not regenerated "
+                "in this run will be lost."
+            )
 
-        # artifacts = {}
+        configs_dir = ckpt_dir / "configs"
+        configs_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. cfgs are always saved, never excludable, pkg owns these directly
+        artifacts = {}
 
-        # 2. delegate to datamodule for scalers / target_normalizer / metadata
-        # TODO: if self.datamodule is not None:
-        #           dm_artifacts = self.datamodule.save_artifacts(ckpt_dir,
-        #                                                               exclude=exclude)
-        #           if not dm_artifacts: warnings.warn(...)
-        #           artifacts.update(dm_artifacts)
+        cfg_values = {
+            "model_cfg": self.model_cfg,
+            "datamodule_cfg": self.datamodule_cfg,
+            "trainer_cfg": self.trainer_cfg,
+        }
+        for name in self._CFG_KEYS:
+            path = configs_dir / f"{name}.pkl"
+            with open(path, "wb") as f:
+                pickle.dump(cfg_values[name], f)
+            artifacts[name] = path
+
+        if self.datamodule is not None:
+            dm_artifacts = self.datamodule.save_artifacts(ckpt_dir, exclude=exclude)
+            if not dm_artifacts:
+                warnings.warn(
+                    "Datamodule had nothing to save (no scalers, target_normalizer, "
+                    "or metadata found)."
+                )
+            else:
+                artifacts.update(dm_artifacts)
 
         registry_path = ckpt_dir / "artifacts.yaml"
-        # TODO: _ArtifactRegistry.write(registry_path, artifacts)
+        _ArtifactRegistry.write(registry_path, artifacts, overwrite=True)
 
         if "model_checkpoint" in exclude:
             return registry_path, []
 
-        # 3. build the checkpointing mechanism to be used by fit()
-        # fit sends these to Trainer without knowing what's inside
         default_ckpt_kwargs = {
             "dirpath": ckpt_dir / "checkpoints",
             "filename": "best-{epoch}-{step}",
@@ -277,10 +282,11 @@ class Base_pkg(_BasePtForecasterV2):
 
         return registry_path, [checkpoint_cb, registry_cb]
 
+    @classmethod
     def load(
-        self,
+        cls,
         ckpt_dir: str | Path,
-        skip: list[str] = [],
+        skip: list[str] | None = None,
     ) -> None:
         """Public, single entry point for loading. Reads artifacts.yaml and
         delegates each artifact to whichever layer owns it.
@@ -316,17 +322,106 @@ class Base_pkg(_BasePtForecasterV2):
             the directory we need to load from
         skip: list[str], defualt = []
             list of artifacts we dont want to load
+
+        Returns
+        -------
+        Base_pkg
+            A fully-formed instance with all restored state.
+
+        Raises
+        ------
+        FileNotFoundError
+            If ``artifacts.yaml`` is not found in ``ckpt_dir``.
         """
-        # ckpt_dir = Path(ckpt_dir)
-        # registry_path = ckpt_dir / "artifacts.yaml"
-        # TODO: artifacts = yaml.safe_load(open(registry_path))["artifacts"]
-        # TODO: artifacts = {k: v for k, v in artifacts.items() if k not in skip}
-        # TODO: load cfgs directly (model_cfg, datamodule_cfg, trainer_cfg)
-        # TODO: self.datamodule.load_artifacts({k: v for k, v in artifacts.items()
-        #           if k in ("scalers", "target_normalizer", "datamodule_metadata")})
-        # TODO: load model weights from artifacts.get("best_model_checkpoint")
-        #           via self.get_cls().load_from_checkpoint(...)
-        pass
+        skip = skip or []
+        ckpt_dir = Path(ckpt_dir)
+        registry_path = ckpt_dir / "artifacts.yaml"
+
+        artifacts = _ArtifactRegistry.get(registry_path)
+        if artifacts is None:
+            raise FileNotFoundError(
+                f"No artifacts.yaml found at {registry_path}. Nothing to load."
+            )
+        artifacts = {k: v for k, v in artifacts.items() if k not in skip}
+
+        obj = cls.__new__(cls)
+
+        obj._init_empty_state()
+        obj._populate_from_artifacts(artifacts)
+
+        return obj
+
+    def _init_empty_state(self) -> None:
+        """Set all instance attributes to safe empty defaults."""
+        self.ckpt_path = None
+        self.model_cfg = {}
+        self.datamodule_cfg = {}
+        self.trainer_cfg = {}
+        self.metadata = {}
+        self.model = None
+        self.trainer = None
+        self.datamodule = None
+        # Pending artifacts to inject when datamodule is created with data
+        self._pending_dm_artifacts = {}
+
+    def _populate_from_artifacts(self, artifacts: dict[str, Any]) -> None:
+        """Populate instance state from a parsed artifacts dictionary."""
+        self._load_cfgs_from_artifacts(artifacts)
+        self._load_metadata_from_artifacts(artifacts)
+        self._init_trainer_from_cfg()
+        self._store_pending_dm_artifacts(artifacts)
+        self._load_model_from_artifacts(artifacts)
+
+    def _load_cfgs_from_artifacts(self, artifacts: dict[str, Any]) -> None:
+        """Load configuration dictionaries from artifacts.
+
+        Only loads keys that are present in ``artifacts``; missing keys
+        (e.g., excluded at save time) are left as the empty defaults
+        set by ``_init_empty_state``.
+        """
+        for name in self._CFG_KEYS:
+            path = artifacts.get(name)
+            if path is None:
+                continue
+            with open(path, "rb") as f:
+                setattr(self, name, pickle.load(f))  # noqa: S301
+
+    def _load_metadata_from_artifacts(self, artifacts: dict[str, Any]) -> None:
+        """Load metadata from datamodule."""
+        metadata_path = artifacts.get("datamodule_metadata")
+        if metadata_path is not None:
+            with open(metadata_path, "rb") as f:
+                self.metadata = pickle.load(f)  # noqa: S301
+
+    def _init_trainer_from_cfg(self) -> None:
+        """Create Trainer instance from loaded config."""
+        if not self.trainer_cfg:
+            return
+        trainer_init_cfg = self.trainer_cfg.copy()
+        callbacks = trainer_init_cfg.pop("callbacks", [])
+
+        self.trainer = Trainer(**trainer_init_cfg, callbacks=callbacks)
+
+    def _store_pending_dm_artifacts(self, artifacts: dict[str, Any]) -> None:
+        """Store datamodule artifact paths for later injection."""
+        self._pending_dm_artifacts = {
+            k: v for k, v in artifacts.items() if k in self._DATAMODULE_KEYS
+        }
+
+    def _load_model_from_artifacts(self, artifacts: dict[str, Any]) -> None:
+        """Load model weights from checkpoint."""
+        ckpt_path = artifacts.get("best_model_checkpoint")
+        if ckpt_path is None:
+            warnings.warn(
+                "No 'best_model_checkpoint' found in artifacts.yaml -- model "
+                "weights were not loaded."
+            )
+            return
+
+        self.ckpt_path = Path(ckpt_path)
+        self.model = self._load_model_from_checkpoint(
+            self.ckpt_path, metadata=self.metadata
+        )
 
     def fit(
         self,
@@ -335,6 +430,8 @@ class Base_pkg(_BasePtForecasterV2):
         save_ckpt: bool = True,
         ckpt_dir: str | Path = "checkpoints",
         ckpt_kwargs: dict[str, Any] | None = None,
+        exclude: list[str] | None = None,
+        overwrite: bool = False,
         **trainer_fit_kwargs,
     ):
         """
@@ -351,6 +448,10 @@ class Base_pkg(_BasePtForecasterV2):
             Directory to save artifacts.
         ckpt_kwargs : dict, optional
             Keyword arguments passed to ``ModelCheckpoint``.
+        exclude : list of str, optional
+            Artifacts to exclude from saving.
+        overwrite : bool, default=False
+            Whether to overwrite the `ckpt_dir` (if present) or not.
         **trainer_fit_kwargs :
             Additional keyword arguments passed to `trainer.fit()`.
 
@@ -363,45 +464,52 @@ class Base_pkg(_BasePtForecasterV2):
             self.datamodule = self._build_datamodule(data)
         else:
             self.datamodule = data
+            # If user passed a datamodule directly, still send pending artifacts if any
+            if self._pending_dm_artifacts and hasattr(
+                self.datamodule, "load_artifacts"
+            ):
+                self.datamodule.load_artifacts(self._pending_dm_artifacts)
+                self._pending_dm_artifacts = {}
+
         self.datamodule.setup(stage="fit")
-        # TODO: call _save here
+
+        if hasattr(self.datamodule, "metadata"):
+            self.metadata = self.datamodule.metadata
 
         if self.model is None:
-            if not self.model_cfg:
-                raise RuntimeError(
-                    "`model_cfg` must be provided to train from scratch."
-                )
-            metadata = self.datamodule.metadata
-            self._build_model(metadata)
+            self.model = self._init_model_from_cfg(self.metadata)
 
-        callbacks = self.trainer_cfg.get("callbacks", []).copy()
-        checkpoint_cb = None
+        save_callbacks = []
+        registry_path = None
         if save_ckpt:
-            ckpt_dir = Path(ckpt_dir)
-            ckpt_dir.mkdir(parents=True, exist_ok=True)
-            default_ckpt_kwargs = {
-                "dirpath": ckpt_dir,
-                "filename": "best-{epoch}-{step}",
-                "save_top_k": 1,
-                "monitor": "val_loss",
-                "mode": "min",
-            }
-            if ckpt_kwargs:
-                default_ckpt_kwargs.update(ckpt_kwargs)
-            checkpoint_cb = ModelCheckpoint(**default_ckpt_kwargs)
-            callbacks.append(checkpoint_cb)
-        trainer_init_cfg = self.trainer_cfg.copy()
-        trainer_init_cfg.pop("callbacks", None)
+            registry_path, save_callbacks = self._save(
+                Path(ckpt_dir),
+                model_ckpt_kwargs=ckpt_kwargs,
+                exclude=exclude,
+                overwrite=overwrite,
+            )
 
-        self.trainer = Trainer(**trainer_init_cfg, callbacks=callbacks)
+        # Use existing trainer if it was created during load(), otherwise create new
+        if self.trainer is None:
+            user_callbacks = self.trainer_cfg.get("callbacks", []).copy()
+            trainer_init_cfg = self.trainer_cfg.copy()
+            trainer_init_cfg.pop("callbacks", None)
+            self.trainer = Trainer(
+                **trainer_init_cfg, callbacks=[*user_callbacks, *save_callbacks]
+            )
+        else:
+            # Add save callbacks to existing trainer (from load)
+            self.trainer.callbacks.extend(save_callbacks)
 
         self.trainer.fit(self.model, datamodule=self.datamodule, **trainer_fit_kwargs)
-        if save_ckpt and checkpoint_cb:
-            best_model_path = Path(checkpoint_cb.best_model_path)
-            self._save_artifact(best_model_path.parent)
-            print(f"Artifacts saved in: {best_model_path.parent}")
-            return best_model_path
-        return None
+        if registry_path is None or not save_callbacks:
+            return None
+
+        best = _ArtifactRegistry.get(registry_path, "best_model_checkpoint")
+        if best is None:
+            return None
+        print(f"Artifacts saved in: {Path(registry_path).parent}")
+        return Path(best["best_model_checkpoint"])
 
     def predict(
         self,
