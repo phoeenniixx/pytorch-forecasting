@@ -46,7 +46,7 @@ class Base_pkg(_BasePtForecasterV2):
     """
 
     _CFG_KEYS = ("model_cfg", "datamodule_cfg", "trainer_cfg")
-    _DATAMODULE_KEYS = ("scalers", "target_normalizer", "datamodule_metadata")
+    _DATAMODULE_KEYS = ("scalers", "target_normalizer")
 
     def __init__(
         self,
@@ -154,7 +154,12 @@ class Base_pkg(_BasePtForecasterV2):
         if not self.datamodule_cfg:
             raise ValueError("`datamodule_cfg` must be provided to build a datamodule.")
         datamodule_cls = self.get_datamodule_cls()
-        return datamodule_cls(data, **self.datamodule_cfg)
+        dm = datamodule_cls(data, **self.datamodule_cfg)
+        if hasattr(self, "_pending_dm_artifacts"):
+            dm.load_artifacts(self._pending_dm_artifacts)
+            self._pending_dm_artifacts = {}
+
+        return dm
 
     def _load_dataloader(
         self, data: TimeSeries | LightningDataModule | DataLoader
@@ -422,8 +427,7 @@ class Base_pkg(_BasePtForecasterV2):
         self,
         data: TimeSeries | LightningDataModule,
         # todo: we should create a base data_module for different data_modules
-        save_ckpt: bool = True,
-        ckpt_dir: str | Path = "checkpoints",
+        ckpt_dir: str | Path | None = None,
         ckpt_kwargs: dict[str, Any] | None = None,
         exclude: list[str] | None = None,
         overwrite: bool = False,
@@ -476,7 +480,7 @@ class Base_pkg(_BasePtForecasterV2):
 
         save_callbacks = []
         registry_path = None
-        if save_ckpt:
+        if ckpt_dir:
             registry_path, save_callbacks = self._save(
                 Path(ckpt_dir),
                 model_ckpt_kwargs=ckpt_kwargs,
