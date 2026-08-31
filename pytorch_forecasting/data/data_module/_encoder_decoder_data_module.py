@@ -8,7 +8,6 @@
 #######################################################################################
 
 from dataclasses import dataclass, fields
-import inspect
 from pathlib import Path
 import pickle
 from typing import Any, Optional, Union
@@ -89,16 +88,23 @@ class DataModuleMetadata:
     min_prediction_length: int
 
     def __getitem__(self, key: str) -> Any:
-        try:
-            return getattr(self, key)
-        except AttributeError:
-            raise KeyError(key) from None
+        if key not in self.keys():
+            raise KeyError(key)
+        return getattr(self, key)
 
     def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
+        if key not in self.keys():
+            return default
+        return getattr(self, key)
 
     def keys(self) -> list[str]:
         return [f.name for f in fields(self)]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.keys()
+
+    def __iter__(self):
+        return iter(self.keys())
 
 
 class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
@@ -217,6 +223,21 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         train_val_test_split: tuple = (0.7, 0.15, 0.15),
         timeseries_datatype: Optional["TimeSeries_datatype"] = None,  # noqa: F821
     ):
+        # constructor arguments as they were given, so that ``with_data`` can
+        # rebuild the module without having to guess which attribute each one
+        # ended up in. The data itself is excluded - it is what gets replaced.
+        self._init_kwargs = {
+            name: value
+            for name, value in locals().items()
+            if name
+            not in (
+                "self",
+                "__class__",  # present because ``__init__`` calls ``super()``
+                "time_series_dataset",
+                "timeseries_datatype",
+            )
+        }
+
         self.timeseries_datatype = timeseries_datatype
 
         self.time_series_dataset = (
@@ -332,12 +353,7 @@ class EncoderDecoderTimeSeriesDataModule(LightningDataModule):
         EncoderDecoderTimeSeriesDataModule
             New instance of the same class, with the same configuration.
         """
-        params = inspect.signature(type(self).__init__).parameters
-        kwargs = {
-            name: getattr(self, name)
-            for name in params
-            if name not in ("self", "time_series_dataset", "timeseries_datatype")
-        }
+        kwargs = dict(self._init_kwargs)
         if isinstance(data, TimeSeries):
             kwargs["time_series_dataset"] = data
         else:

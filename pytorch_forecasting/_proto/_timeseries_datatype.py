@@ -43,16 +43,23 @@ class TimeSeriesMetadata:
     is_prediction: bool = False
 
     def __getitem__(self, key: str) -> Any:
-        try:
-            return getattr(self, key)
-        except AttributeError:
-            raise KeyError(key) from None
+        if key not in self.keys():
+            raise KeyError(key)
+        return getattr(self, key)
 
     def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
+        if key not in self.keys():
+            return default
+        return getattr(self, key)
 
     def keys(self) -> list[str]:
         return [f.name for f in fields(self)]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.keys()
+
+    def __iter__(self):
+        return iter(self.keys())
 
 
 class TimeSeries_datatype:
@@ -180,7 +187,13 @@ class TimeSeries_datatype:
         if self.time is None:
             taken = set(self._group) | set(self._target) | set(self._static)
             taken.add(self.weight)
-            self.time = next(col for col in cols if col not in taken)
+            self.time = next((col for col in cols if col not in taken), None)
+            if self.time is None:
+                raise ValueError(
+                    "no column is left to use as the time index: every column "
+                    f"of `data` ({cols}) is already used as group, target, "
+                    "static or weight. Pass `time` explicitly."
+                )
 
         index_cols = set(self._group) | {self.time, self.weight}
         typed = [col for col in cols if col not in index_cols]
@@ -383,8 +396,9 @@ class TimeSeries_datatype:
     def from_tensors(
         cls,
         tensors: dict[str, torch.Tensor],
-        metadata: TimeSeriesMetadata | None = None,
+        metadata: TimeSeriesMetadata | dict | None = None,
         group_starts: list[int] | None = None,
+        groups: np.ndarray | list | None = None,
     ) -> "TimeSeries_datatype":
         """Create a ``TimeSeries_datatype`` from tensors, e.g. model predictions.
 
@@ -397,13 +411,17 @@ class TimeSeries_datatype:
         tensors : dict of str to torch.Tensor
             Must contain ``"y"``, of shape (n_timepoints, n_targets) or
             (n_timepoints,). May contain ``"t"`` of shape (n_timepoints,).
-        metadata : TimeSeriesMetadata, optional
-            Metadata of the data the predictions were made for. Only the
-            target names are taken from it; if not given, targets are named
-            ``y0, y1, ...``.
+        metadata : TimeSeriesMetadata or dict, optional
+            Metadata of the data the predictions were made for, either a
+            ``TimeSeriesMetadata`` or the dict of the D1 ``TimeSeries``. Only
+            the target names are taken from it; if not given, targets are
+            named ``y0, y1, ...``.
         group_starts : list of int, optional
             Row offsets at which the individual series start. Defaults to
-            ``[0]``, i.e. a single series.
+            ``[0]``, i.e. a single series. Ignored if ``groups`` is given.
+        groups : array-like of shape (n_timepoints,), optional
+            Group label of each row, for callers that know which series each
+            prediction belongs to. Takes precedence over ``group_starts``.
 
         Returns
         -------
@@ -416,18 +434,24 @@ class TimeSeries_datatype:
         n_rows = y.shape[0]
 
         if metadata is not None:
-            target = list(metadata.cols["y"])
+            # mapping access, so that both TimeSeriesMetadata and the plain
+            # dict returned by the D1 ``TimeSeries`` work here
+            target = list(metadata["cols"]["y"])
         else:
             target = [f"y{i}" for i in range(y.shape[-1])]
 
         t = tensors.get("t")
         t = np.arange(n_rows) if t is None else torch.as_tensor(t).cpu().numpy()
 
-        starts = [0] if group_starts is None else [int(s) for s in group_starts]
-        lengths = [b - a for a, b in zip(starts, starts[1:] + [n_rows])]
+        if groups is None:
+            starts = [0] if group_starts is None else [int(s) for s in group_starts]
+            lengths = [b - a for a, b in zip(starts, starts[1:] + [n_rows])]
+            groups = np.repeat(np.arange(len(starts)), lengths)
+        else:
+            groups = np.asarray(groups)
 
         df = pd.DataFrame(y.numpy(), columns=target)
-        df.insert(0, "_series", np.repeat(np.arange(len(starts)), lengths))
+        df.insert(0, "_series", groups)
         df.insert(1, "_time_idx", t)
 
         obj = cls(df, time="_time_idx", target=target, group=["_series"])
