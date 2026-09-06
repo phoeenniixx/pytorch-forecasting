@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from torch.utils.data import Dataset
 
-from pytorch_forecasting.data.timeseries import TimeSeries
+from pytorch_forecasting.data.timeseries import TimeSeries, TimeSeriesMetadata
 
 
 @pytest.fixture
@@ -51,7 +52,7 @@ def test_init_basic(sample_data):
     ts = TimeSeries(data=sample_data, time="timestamp", target="target_value")
 
     assert ts.time == "timestamp"
-    assert ts.target == ["target_value"]
+    assert ts.metadata["cols"]["y"] == ["target_value"]
     assert len(ts.feature_cols) == 6  # All columns except timestamp, target_value
     assert len(ts) == 1  # Single group by default
 
@@ -92,107 +93,61 @@ def test_init_with_features_categorization(sample_data):
     assert ts.metadata["col_type"]["feature2"] == "F"
 
 
-def test_init_with_known_unknown(sample_data):
-    """Test known and unknown features classification.
+def test_infer_target_and_time(sample_data):
+    """Test the minimal call, where every column role is inferred.
 
-    Checks if the known and unknown feature categorization is correctly set
-    and stored in metadata."""
+    ``TimeSeries(data)`` is the documented minimal usage: the target defaults to
+    the last column and the time to the first unused one."""
+    ts = TimeSeries(data=sample_data)
+
+    assert ts.metadata["cols"]["y"] == ["static_feat"]  # last column
+    assert ts._time == "timestamp"  # first column not otherwise used
+
+
+def test_infer_time_skips_used_columns(sample_data):
+    """Test that time inference skips columns already used in another role."""
     ts = TimeSeries(
         data=sample_data,
-        time="timestamp",
         target="target_value",
-        known=["feature1"],
-        unknown=["feature2", "feature3"],
-    )
-
-    assert ts.known == ["feature1"]
-    assert ts.unknown == ["feature2", "feature3"]
-    assert ts.metadata["col_known"]["feature1"] == "K"
-    assert ts.metadata["col_known"]["feature2"] == "U"
-
-
-def test_init_with_weight(sample_data):
-    """Test initialization with weight parameter.
-
-    Verifies that the weight column is stored correctly and excluded
-    from the feature columns."""
-    ts = TimeSeries(
-        data=sample_data, time="timestamp", target="target_value", weight="weight"
-    )
-
-    assert ts.weight == "weight"
-    assert "weight" not in ts.feature_cols
-
-
-def test_getitem_basic(sample_data):
-    """Test __getitem__ with basic configuration.
-
-    Checks the output structure of a single time series without grouping,
-    ensuring x, y are tensors of correct shapes."""
-    ts = TimeSeries(data=sample_data, time="timestamp", target="target_value")
-
-    result = ts[0]
-    assert torch.is_tensor(result["y"])
-    assert torch.is_tensor(result["x"])
-    assert "t" in result
-    assert "cutoff_time" in result
-    assert len(result["y"]) == 10  # 10 data points
-    assert result["y"].shape == (10, 1)  # One target variable
-    assert result["x"].shape[1] == 6  # Six feature columns
-
-
-def test_getitem_with_groups(sample_data):
-    """Test __getitem__ with groups parameter.
-
-    Verifies the per-group access using index and checks that each group
-    has the correct number of time steps."""
-    ts = TimeSeries(
-        data=sample_data, time="timestamp", target="target_value", group=["group_id"]
-    )
-
-    # group (1)
-    result_g1 = ts[0]
-    assert len(result_g1["t"]) == 5  # 5 data points in group 1
-
-    # group (2)
-    result_g2 = ts[1]
-    assert len(result_g2["t"]) == 5  # 5 data points in group 2
-
-
-def test_getitem_with_static(sample_data):
-    """Test __getitem__ with static features.
-
-    Ensures static features are included in the output and correctly
-    mapped per group."""
-    ts = TimeSeries(
-        data=sample_data,
-        time="timestamp",
-        target="target_value",
-        group=["group_id"],
+        group=["timestamp"],
         static=["static_feat"],
+        weight="weight",
     )
 
-    result_g1 = ts[0]
-    result_g2 = ts[1]
-
-    assert torch.is_tensor(result_g1["st"])
-    assert result_g1["st"].item() == 10  # Static feature for group 1
-    assert result_g2["st"].item() == 20  # Static feature for group 2
+    assert ts._time == "feature1"
 
 
-def test_getitem_with_weight(sample_data):
-    """Test __getitem__ with weight parameter.
+def test_infer_num_cat_from_dtypes():
+    """Test the dtype split used when num and cat are not given.
 
-    Validates that weights are correctly returned in the output and have the
-    expected length and type."""
-    ts = TimeSeries(
-        data=sample_data, time="timestamp", target="target_value", weight="weight"
+    Numeric columns become ``"F"`` and object/categorical ones ``"C"``, for
+    every column that is not group, time or weight."""
+    df = pd.DataFrame(
+        {
+            "time_idx": [0, 1, 2],
+            "value": [1.0, 2.0, 3.0],
+            "category": ["a", "b", "a"],
+            "target": [4.0, 5.0, 6.0],
+        }
     )
 
-    result = ts[0]
-    assert "weights" in result
-    assert torch.is_tensor(result["weights"])
-    assert len(result["weights"]) == 10
+    ts = TimeSeries(data=df, time="time_idx", target="target")
+
+    assert ts.metadata["col_type"]["value"] == "F"
+    assert ts.metadata["col_type"]["target"] == "F"
+    assert ts.metadata["col_type"]["category"] == "C"
+
+
+def test_infer_num_only_when_cat_given():
+    """Test that num and cat are inferred independently.
+
+    Passing ``cat=[]`` must not suppress inference of ``num``."""
+    df = pd.DataFrame({"time_idx": [0, 1], "value": [1.0, 2.0], "target": [3.0, 4.0]})
+
+    ts = TimeSeries(data=df, time="time_idx", target="target", cat=[])
+
+    assert ts._num == ["value", "target"]
+    assert ts._cat == []
 
 
 def test_with_future_data(sample_data, future_data):
@@ -339,61 +294,70 @@ def test_empty_groups():
     assert len(ts) == 1  # Only one group
 
 
-def test_metadata_structure(sample_data):
-    """Test the structure of metadata.
-
-    Ensures the metadata dictionary includes the expected keys and
-    correct mappings of feature roles."""
+def test_to_pandas_with_future_data(sample_data, future_data):
+    """Test that to_pandas appends the future frame when there is one."""
     ts = TimeSeries(
         data=sample_data,
+        data_future=future_data,
         time="timestamp",
         target="target_value",
-        num=["feature1", "feature2", "feature3"],
-        cat=[],  # No categorical features
-        static=["static_feat"],
-        known=["feature1"],
-        unknown=["feature2", "feature3"],
+        group=["group_id"],
     )
 
-    metadata = ts.get_metadata()
-
-    assert "cols" in metadata
-    assert "col_type" in metadata
-    assert "col_known" in metadata
-
-    assert metadata["cols"]["y"] == ["target_value"]
-    assert set(metadata["cols"]["x"]) == {
-        "feature1",
-        "feature2",
-        "feature3",
-        "group_id",
-        "weight",
-        "static_feat",
-    }
-    assert metadata["cols"]["st"] == ["static_feat"]
-
-    assert metadata["col_type"]["feature1"] == "F"
-    assert metadata["col_type"]["feature2"] == "F"
-
-    assert metadata["col_known"]["feature1"] == "K"
-    assert metadata["col_known"]["feature2"] == "U"
+    df = ts.to_pandas()
+    assert len(df) == len(sample_data) + len(future_data)
 
 
-def test_group_index():
-    """Ensure group indices are contiguous and deterministic.
+def test_from_tensors_minimal():
+    """Test lifting bare model output back into a TimeSeries.
 
-    Regression guard: older code used `hash(str(group_id))`, which could yield
-    non-contiguous ids and unstable mappings.
-    """
+    This is the output path: a model returns tensors, and they must become the
+    same type the user passed in."""
+    preds = TimeSeries.from_tensors({"y": torch.arange(6.0)})
 
-    data = []
-    for gid in ["aa", "bb", "cc", "dd"]:
-        for t in range(3):
-            data.append({"gid": gid, "time": t, "target": t})
+    df = preds.to_pandas()
+    assert list(df.columns) == ["_series", "_time_idx", "y0"]
+    assert list(df["_time_idx"]) == list(range(6))
+    assert preds.metadata.is_prediction
+    assert len(preds) == 1  # one series
 
-    df = pd.DataFrame(data)
-    ts = TimeSeries(data=df, time="time", target="target", group=["gid"])
 
-    group_indices = [int(ts[i]["group"][0]) for i in range(len(ts))]
+def test_from_tensors_names_targets_from_metadata(sample_data):
+    """Test that target names carry over from the schema they were produced by."""
+    md = TimeSeries(
+        data=sample_data, time="timestamp", target="target_value"
+    ).get_metadata()
 
-    assert group_indices == list(range(len(ts)))
+    preds = TimeSeries.from_tensors({"y": torch.zeros(4, 1)}, metadata=md)
+
+    assert preds.target == ["target_value"]
+
+
+def test_from_tensors_ignores_mismatched_metadata(sample_data):
+    """Test the fallback when the last axis does not hold targets.
+
+    In quantile mode the last axis holds quantiles, not targets, so the target
+    names must not be used to label it."""
+    md = TimeSeries(
+        data=sample_data, time="timestamp", target="target_value"
+    ).get_metadata()
+
+    preds = TimeSeries.from_tensors({"y": torch.zeros(4, 3)}, metadata=md)
+
+    assert preds.target == ["y0", "y1", "y2"]
+
+
+def test_from_tensors_with_groups():
+    """Test per-row series labels."""
+    preds = TimeSeries.from_tensors({"y": torch.zeros(6)}, groups=[0, 0, 0, 1, 1, 1])
+
+    assert len(preds) == 2
+
+
+def test_from_tensors_with_time():
+    """Test that a supplied time index is used instead of a positional one."""
+    preds = TimeSeries.from_tensors(
+        {"y": torch.zeros(3), "t": torch.tensor([10, 11, 12])}
+    )
+
+    assert list(preds.to_pandas()["_time_idx"]) == [10, 11, 12]
