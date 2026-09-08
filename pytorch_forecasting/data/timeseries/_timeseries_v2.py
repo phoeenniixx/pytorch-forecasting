@@ -4,14 +4,16 @@ Timeseries datatype.
 Beta version, experimental - use for testing but not in production.
 """
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import replace
 from warnings import warn
 
 import numpy as np
 import pandas as pd
 import torch
 
+from pytorch_forecasting.data._metadata import TimeSeriesMetadata
 from pytorch_forecasting.utils._coerce import _coerce_to_list
+from pytorch_forecasting.utils._validation import _check_column_names, _check_type
 
 #######################################################################################
 # Disclaimer: This datatype is still work in progress and experimental, please
@@ -22,47 +24,6 @@ from pytorch_forecasting.utils._coerce import _coerce_to_list
 # For now, this pipeline handles the simplest situation: The whole data can be loaded
 # into the memory.
 #######################################################################################
-
-
-@dataclass(frozen=True)
-class TimeSeriesMetadata:
-    """Schema of a :class:`TimeSeries`.
-
-    Parameters
-    ----------
-    cols : dict
-        ``{"y": [...], "x": [...], "st": [...]}``, names of the target, feature
-        and static columns. List order is the column order of the corresponding
-        tensor dimension, and must not be reordered.
-    col_type : dict
-        maps column name to ``"F"`` (numerical) or ``"C"`` (categorical).
-    col_known : dict
-        maps column name to ``"K"`` (known in the future) or ``"U"`` (unknown).
-    is_prediction : bool, default=False
-        whether the described object holds predictions rather than input data.
-    """
-
-    cols: dict[str, list[str]]
-    col_type: dict[str, str]
-    col_known: dict[str, str]
-    is_prediction: bool = False
-
-    def __getitem__(self, key):
-        if key not in self:
-            raise KeyError(key)
-        return getattr(self, key)
-
-    def get(self, key, default=None):
-        return getattr(self, key) if key in self else default
-
-    def keys(self):
-        return [f.name for f in fields(self)]
-
-    def __contains__(self, key):
-        return key in self.keys()
-
-    def __iter__(self):
-        return iter(self.keys())
 
 
 class TimeSeries:
@@ -193,6 +154,8 @@ class TimeSeries:
         self._unknown = _coerce_to_list(unknown)
         self._static = _coerce_to_list(static)
 
+        self._validate_data()
+        self._validate_columns()
         self._infer_columns()
 
         self.feature_cols = [
@@ -211,6 +174,52 @@ class TimeSeries:
         self._group_to_idx = {gid: i for i, gid in enumerate(self._group_ids)}
 
         self._prepare_metadata()
+
+    def _validate_data(self):
+        """Check the data frames, before anything indexes into them.
+
+        Raises
+        ------
+        TypeError
+            If ``data`` or ``data_future`` is not a ``pandas.DataFrame``.
+        ValueError
+            If ``data`` has no columns.
+        """
+        _check_type(self.data, pd.DataFrame, "data")
+        _check_type(self.data_future, pd.DataFrame, "data_future", allow_none=True)
+
+        if len(self.data.columns) == 0:
+            raise ValueError("`data` has no columns.")
+
+    def _validate_columns(self):
+        """Check that every column named by the user exists in ``data``.
+
+        Raises
+        ------
+        ValueError
+            If a named column is not in ``data``, or if the same column is
+            given as both known and unknown.
+        """
+        _check_column_names(
+            {
+                "time": self._time,
+                "target": self._target,
+                "group": self._group,
+                "weight": self.weight,
+                "num": self._num,
+                "cat": self._cat,
+                "known": self._known,
+                "unknown": self._unknown,
+                "static": self._static,
+            },
+            self.data.columns,
+        )
+
+        both = set(self._known) & set(self._unknown)
+        if both:
+            raise ValueError(
+                f"columns given as both `known` and `unknown`: {sorted(both)}."
+            )
 
     def _infer_columns(self):
         """Fill in the column roles that were not passed by the user.
@@ -467,12 +476,37 @@ class TimeSeries:
         TimeSeries
             with columns ``_series``, ``_time_idx`` and one per target, and
             ``metadata.is_prediction`` set to ``True``.
+
+        Raises
+        ------
+        ValueError
+            If ``"y"`` is missing, is not 1- or 2-dimensional, or if ``t`` or
+            ``groups`` does not have one entry per row of ``y``.
         """
+        if "y" not in tensors:
+            raise ValueError(
+                '`tensors` must contain "y", the predicted values. Got keys: '
+                f"{sorted(tensors)}."
+            )
+
         y = tensors["y"]
         if y.ndim == 1:
             y = y.unsqueeze(-1)
+        elif y.ndim != 2:
+            raise ValueError(
+                "`tensors['y']` must have shape (n,) or (n, n_targets), got "
+                f"shape {tuple(y.shape)}. Reshape it first, e.g. "
+                "y.reshape(-1, 1)."
+            )
         y = y.detach().cpu().numpy()
         n_rows, n_targets = y.shape
+
+        for name, value in (("t", tensors.get("t")), ("groups", groups)):
+            if value is not None and len(value) != n_rows:
+                raise ValueError(
+                    f"`{name}` must have one entry per row of `y` ({n_rows}), "
+                    f"got {len(value)}."
+                )
 
         target = list(metadata["cols"]["y"]) if metadata is not None else []
         if len(target) != n_targets:

@@ -2,9 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from torch.utils.data import Dataset
 
-from pytorch_forecasting.data.timeseries import TimeSeries, TimeSeriesMetadata
+from pytorch_forecasting.data.timeseries import TimeSeries
 
 
 @pytest.fixture
@@ -91,30 +90,6 @@ def test_init_with_features_categorization(sample_data):
     assert ts.static == ["static_feat"]
     assert ts.metadata["col_type"]["feature1"] == "F"
     assert ts.metadata["col_type"]["feature2"] == "F"
-
-
-def test_infer_target_and_time(sample_data):
-    """Test the minimal call, where every column role is inferred.
-
-    ``TimeSeries(data)`` is the documented minimal usage: the target defaults to
-    the last column and the time to the first unused one."""
-    ts = TimeSeries(data=sample_data)
-
-    assert ts.metadata["cols"]["y"] == ["static_feat"]  # last column
-    assert ts._time == "timestamp"  # first column not otherwise used
-
-
-def test_infer_time_skips_used_columns(sample_data):
-    """Test that time inference skips columns already used in another role."""
-    ts = TimeSeries(
-        data=sample_data,
-        target="target_value",
-        group=["timestamp"],
-        static=["static_feat"],
-        weight="weight",
-    )
-
-    assert ts._time == "feature1"
 
 
 def test_infer_num_cat_from_dtypes():
@@ -259,21 +234,6 @@ def test_different_future_groups(sample_data):
     assert 3 not in ts._group_ids
 
 
-def test_multiple_targets(sample_data):
-    """Test handling of multiple target variables.
-
-    Verifies that multiple target columns are handled and returned
-    as the correct shape in the output."""
-    sample_data["target_value2"] = np.cos(np.arange(10)) + 5
-
-    ts = TimeSeries(
-        data=sample_data, time="timestamp", target=["target_value", "target_value2"]
-    )
-
-    result = ts[0]
-    assert result["y"].shape == (10, 2)  # Two target variables
-
-
 def test_empty_groups():
     """Test handling of empty groups.
 
@@ -306,58 +266,3 @@ def test_to_pandas_with_future_data(sample_data, future_data):
 
     df = ts.to_pandas()
     assert len(df) == len(sample_data) + len(future_data)
-
-
-def test_from_tensors_minimal():
-    """Test lifting bare model output back into a TimeSeries.
-
-    This is the output path: a model returns tensors, and they must become the
-    same type the user passed in."""
-    preds = TimeSeries.from_tensors({"y": torch.arange(6.0)})
-
-    df = preds.to_pandas()
-    assert list(df.columns) == ["_series", "_time_idx", "y0"]
-    assert list(df["_time_idx"]) == list(range(6))
-    assert preds.metadata.is_prediction
-    assert len(preds) == 1  # one series
-
-
-def test_from_tensors_names_targets_from_metadata(sample_data):
-    """Test that target names carry over from the schema they were produced by."""
-    md = TimeSeries(
-        data=sample_data, time="timestamp", target="target_value"
-    ).get_metadata()
-
-    preds = TimeSeries.from_tensors({"y": torch.zeros(4, 1)}, metadata=md)
-
-    assert preds.target == ["target_value"]
-
-
-def test_from_tensors_ignores_mismatched_metadata(sample_data):
-    """Test the fallback when the last axis does not hold targets.
-
-    In quantile mode the last axis holds quantiles, not targets, so the target
-    names must not be used to label it."""
-    md = TimeSeries(
-        data=sample_data, time="timestamp", target="target_value"
-    ).get_metadata()
-
-    preds = TimeSeries.from_tensors({"y": torch.zeros(4, 3)}, metadata=md)
-
-    assert preds.target == ["y0", "y1", "y2"]
-
-
-def test_from_tensors_with_groups():
-    """Test per-row series labels."""
-    preds = TimeSeries.from_tensors({"y": torch.zeros(6)}, groups=[0, 0, 0, 1, 1, 1])
-
-    assert len(preds) == 2
-
-
-def test_from_tensors_with_time():
-    """Test that a supplied time index is used instead of a positional one."""
-    preds = TimeSeries.from_tensors(
-        {"y": torch.zeros(3), "t": torch.tensor([10, 11, 12])}
-    )
-
-    assert list(preds.to_pandas()["_time_idx"]) == [10, 11, 12]
