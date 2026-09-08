@@ -78,24 +78,16 @@ class TimeSeries:
 
     Notes
     -----
-    This is a datatype, not a ``torch.utils.data.Dataset``. It implements
-    ``__len__`` and ``__getitem__`` so that a data module can iterate series out
-    of it, but it must not be handed to a ``DataLoader``.
-
     Columns that are not passed are inferred:
 
     * ``target`` is the last column of ``data``.
     * ``time`` is the first column not already used as ``group``, ``target``,
       ``static`` or ``weight``. If no such column exists, ``ValueError``
       is raised - pass ``time`` explicitly.
-    * ``num`` and ``cat`` are the dtype split (``"fi"`` numerical,
-      ``"Obc"`` categorical) over all columns that are not ``group``, ``time``
-      or ``weight``. Each is inferred only if not passed, so passing ``cat=[]``
-      still infers ``num``.
+    * ``num`` and ``cat`` are the dtype split over all columns that are not ``group``,
+      ``time`` or ``weight``.
 
-    Parameters are stored on same-named attributes exactly as passed; the
-    coerced and inferred values live on their underscored counterparts and are
-    reported by ``get_metadata``.
+    Parameters are stored on same-named attributes exactly as passed.
 
     Examples
     --------
